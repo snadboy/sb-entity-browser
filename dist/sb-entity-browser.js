@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -391,16 +391,20 @@ class SbEntityBrowserEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
-    this._updateCounts();
   }
 
-  _updateCounts() {
-    if (!this._summary || !this._hass || !this._config) return;
+  // Live match counts, rendered as the patterns field's helper text so they
+  // sit right under the inputs (a summary appended below the form ends up
+  // below the fold and is never seen).
+  _patternsHelper() {
+    const base = "Substring match with implied wildcards — “battery” means “*battery*”.";
+    if (!this._hass || !this._config) return base;
     const { ids, patCounts } = matchInfo(this._hass, this._config);
-    const parts = (this._config.patterns || []).map((p, i) => `“${p}”: ${patCounts[i]}`);
-    this._summary.textContent =
-      `Matching now: ${ids.length} entit${ids.length === 1 ? "y" : "ies"}` +
-      (parts.length ? ` — ${parts.join(" · ")}` : "");
+    const parts = (this._config.patterns || [])
+      .filter((p) => p && p.trim())
+      .map((p, i) => `“${p}”: ${patCounts[i]}`);
+    return `Matching now: ${ids.length} entit${ids.length === 1 ? "y" : "ies"}` +
+      (parts.length > 1 ? ` (${parts.join(" · ")})` : "") + `. ${base}`;
   }
 
   _render() {
@@ -417,24 +421,19 @@ class SbEntityBrowserEditor extends HTMLElement {
           tap_action: "Tap action",
           diagnostics_button: "Show diagnostics (F12) button",
         }[s.name] || s.name);
-      this._form.computeHelper = (s) =>
-        ({
-          patterns:
-            "Substring match with implied wildcards — “battery” means “*battery*” (explicit * and ? work too). Any pattern may match.",
+      this._form.computeHelper = (s) => {
+        if (s.name === "patterns") return this._patternsHelper();
+        return {
           labels: "If set, entities must ALSO carry one of these labels.",
           areas: "If set, entities must ALSO be in one of these areas.",
           tap_action: "Perform-action with an empty target acts on the clicked entity.",
-        }[s.name]);
+        }[s.name];
+      };
       this._form.addEventListener("value-changed", (e) => {
         this._config = { ...this._config, ...e.detail.value };
         fire(this, "config-changed", { config: this._config });
-        this._updateCounts();
       });
       this.appendChild(this._form);
-      this._summary = document.createElement("div");
-      this._summary.style.cssText =
-        "color: var(--secondary-text-color); font-size: .85em; padding: 8px 4px 0; font-style: italic;";
-      this.appendChild(this._summary);
     }
     this._form.hass = this._hass;
     this._form.schema = [
@@ -463,7 +462,6 @@ class SbEntityBrowserEditor extends HTMLElement {
       { name: "diagnostics_button", selector: { boolean: {} } },
     ];
     this._form.data = this._config;
-    this._updateCounts();
   }
 }
 
