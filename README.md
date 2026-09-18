@@ -10,11 +10,19 @@ persisted per browser.
 ## Features
 
 - **Entity matching** by patterns, **labels**, and **areas** — any mix of
-  domains. Patterns are substring matches with implied wildcards (`battery`
-  means `*battery*`; explicit `*`/`?` work too). Within a category any entry
-  matches; across categories every configured one must be satisfied — so
-  patterns + an area means "these entities, in that area". Each pattern field in the editor
-  shows its own live match count directly beneath it.
+  domains. A pattern without spaces is a substring glob on the entity id with
+  implied wildcards (`battery` means `*battery*`; explicit `*`/`?` work too).
+  A pattern **with spaces is a word query**, HA target-picker style: every
+  word must match the entity id *or the friendly name*, in any order —
+  `fp300 occupancy` and `occupancy fp300` find the same entities. Within a
+  category any entry matches; across categories every configured one must be
+  satisfied — so patterns + an area means "these entities, in that area".
+  Each pattern field in the editor shows its own live match count.
+- **URL override**: `?seb-<storage_id>=<pattern>` replaces the card's
+  configured patterns for that page view (labels/areas still constrain);
+  spaces URL-encode as `%20` or `+`. The card shows a "URL filter" note with
+  a tap-to-clear. Great for buttons that deep-link one browser card to
+  different searches — no helper entities involved.
 - **State chips with counts** at the top of the card; tap to filter the list.
   Multi-select, `unavailable`/`unknown` always surface as their own chips.
   When the matched set is numeric (temperatures, batteries), the chips become

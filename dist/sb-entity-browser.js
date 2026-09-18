@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -20,8 +20,23 @@ const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
 
 // Implied leading/trailing wildcards: "battery" matches *battery*.
-const globToRegex = (glob) =>
-  new RegExp(glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."));
+const globToRegex = (glob, flags) =>
+  new RegExp(glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."), flags);
+
+// A pattern WITH spaces is a word query (spaces can't occur in entity ids, so
+// there's no ambiguity): every token must match the entity id OR the friendly
+// name, any order, case-insensitive — HA target-picker style. A pattern
+// without spaces stays a glob-substring on the entity id.
+const patternMatcher = (p) => {
+  if (!p || !p.trim()) return null;
+  const s = p.trim();
+  if (/\s/.test(s)) {
+    const toks = s.split(/\s+/).map((t) => globToRegex(t, "i"));
+    return (id, name) => toks.every((t) => t.test(id) || (name && t.test(name)));
+  }
+  const r = globToRegex(s);
+  return (id) => r.test(id);
+};
 
 const entityAreaId = (hass, id) => {
   const reg = hass.entities?.[id];
@@ -33,16 +48,17 @@ const entityAreaId = (hass, id) => {
 // satisfied. An empty category doesn't constrain.
 const matchInfo = (hass, config) => {
   // Index-aligned with config.patterns (blank entries match nothing).
-  const regexes = (config.patterns || []).map((p) => (p && p.trim() ? globToRegex(p) : null));
-  const active = regexes.filter(Boolean).length;
+  const matchers = (config.patterns || []).map(patternMatcher);
+  const active = matchers.filter(Boolean).length;
   const labels = config.labels || [];
   const areas = config.areas || [];
-  const patCounts = new Array(regexes.length).fill(0);
+  const patCounts = new Array(matchers.length).fill(0);
   const ids = [];
   for (const id of Object.keys(hass.states)) {
+    const name = hass.states[id].attributes.friendly_name;
     let pOk = active === 0;
-    regexes.forEach((r, i) => {
-      if (r && r.test(id)) {
+    matchers.forEach((m, i) => {
+      if (m && m(id, name)) {
         patCounts[i]++;
         pOk = true;
       }
@@ -146,8 +162,43 @@ class SbEntityBrowser extends HTMLElement {
     return 4;
   }
 
+  // ?seb-<storage_id>=<pattern> overrides the configured patterns (labels and
+  // areas still constrain). Spaces arrive URL-encoded (%20 or +) and become a
+  // word query like any other spaced pattern.
+  connectedCallback() {
+    this._onNav = () => {
+      const u = this._urlPattern();
+      if (u !== this._lastUrlPat) {
+        this._lastUrlPat = u;
+        this._sig = "";
+        if (this._hass && this._config) this._render();
+      }
+    };
+    window.addEventListener("location-changed", this._onNav);
+    window.addEventListener("popstate", this._onNav);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("location-changed", this._onNav);
+    window.removeEventListener("popstate", this._onNav);
+  }
+
+  _urlPattern() {
+    try {
+      const v = new URLSearchParams(location.search).get(`seb-${this._config?.storage_id}`);
+      return v && v.trim() ? v.trim() : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  _effConfig() {
+    const u = this._urlPattern();
+    return u ? { ...this._config, patterns: [u] } : this._config;
+  }
+
   _matches() {
-    return matchInfo(this._hass, this._config).ids;
+    return matchInfo(this._hass, this._effConfig()).ids;
   }
 
   _signature() {
@@ -233,7 +284,9 @@ class SbEntityBrowser extends HTMLElement {
     this._lastRender = Date.now();
     this._sig = this._signature();
     const h = this._hass;
-    const cfg = this._config;
+    const urlPat = this._urlPattern();
+    this._lastUrlPat = urlPat;
+    const cfg = this._effConfig();
     const { ids, patCounts } = matchInfo(h, cfg);
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
@@ -360,6 +413,9 @@ class SbEntityBrowser extends HTMLElement {
             ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
             : ""}
         </div>
+        ${urlPat
+          ? `<div class="note">URL filter: “${esc(urlPat)}” · <span class="url-clear" style="cursor:pointer; color:var(--primary-color); font-style:normal;">show configured</span></div>`
+          : ""}
         ${chipsHtml}
         ${this._diag
           ? `<div class="note">${ids.length} matched · ${rows.length} shown · v${VERSION}${
@@ -413,6 +469,15 @@ class SbEntityBrowser extends HTMLElement {
         if (r0?.offsetHeight) listEl.style.maxHeight = r0.offsetHeight * listRows + "px";
       });
     }
+    const clear = this.shadowRoot.querySelector(".url-clear");
+    if (clear)
+      clear.addEventListener("click", () => {
+        const params = new URLSearchParams(location.search);
+        params.delete(`seb-${this._config.storage_id}`);
+        const q = params.toString();
+        history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
+        this._onNav?.();
+      });
   }
 
   _chip(state, count) {
@@ -449,10 +514,12 @@ class SbEntityBrowserEditor extends HTMLElement {
   }
 
   _count(p) {
-    if (!this._hass || !p || !p.trim()) return null;
-    const r = globToRegex(p);
+    if (!this._hass) return null;
+    const m = patternMatcher(p);
+    if (!m) return null;
     let n = 0;
-    for (const id of Object.keys(this._hass.states)) if (r.test(id)) n++;
+    for (const id of Object.keys(this._hass.states))
+      if (m(id, this._hass.states[id].attributes.friendly_name)) n++;
     return n;
   }
 
@@ -462,7 +529,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const n = this._count(input.value);
       count.textContent =
         n == null
-          ? "Implied *…* wildcards — “battery” means “*battery*”"
+          ? "Glob (“battery” = *battery*) or word query — “fp300 occupancy” matches ids AND friendly names, any order"
           : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
     });
   }
@@ -493,7 +560,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const input = document.createElement("input");
       input.type = "text";
       input.value = p || "";
-      input.placeholder = "e.g. battery or switch.rack_*";
+      input.placeholder = "e.g. switch.rack_* or fp300 occupancy";
       input.autocomplete = "off";
       input.style.cssText =
         "flex:1; box-sizing:border-box; font:inherit; color:var(--primary-text-color);" +
