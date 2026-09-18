@@ -1,0 +1,43 @@
+# sb-entity-browser — session notes
+
+HACS **dashboard card** (category: plugin/Dashboard): pattern-matched entity list
+with interactive state-filter chips and an opt-in F12-style diagnostics mode.
+Design brief (2026-09-18): all setup visual, NO helper entities (filter state is
+card-local, localStorage per `storage_id`), multi-domain globs + labels,
+state chips w/ counts (numeric → min/max range), configurable secondary info,
+tap actions. Polish is the goal; diagnostics is a per-card opt-in mode.
+
+| | |
+|---|---|
+| Repo | https://github.com/snadboy/sb-entity-browser — local `~/projects/git/sb-entity-browser` |
+| Card | `custom:sb-entity-browser` (+ `sb-entity-browser-editor`) |
+| File | `dist/sb-entity-browser.js` — **vanilla JS, no build step**; hand-edit, bump VERSION const + release |
+| Install | HACS custom repo, category Dashboard; resource auto-registered at `/hacsfiles/sb-entity-browser/sb-entity-browser.js` |
+
+## Architecture notes
+
+- Vanilla custom element, full innerHTML re-render, event delegation after render.
+  Change gate: re-render at most every 2s unless the matched set's signature
+  (id|state|last_updated) changed.
+- Editor is `ha-form` with selector schema (text multiple for globs, `label`
+  selector, `ui_action` selector) — zero custom form code.
+- Icons via `ha-state-icon` (`.hass` + `.stateObj`) — HA-registered element.
+- Numeric mode heuristic: all non-unavailable states parse as float AND >8
+  distinct values → min/max inputs instead of chips.
+- List capped at 100 rows in normal mode; diagnostics shows all.
+- Tap actions implemented manually (more-info via `hass-more-info` event,
+  navigate via pushState + `location-changed`, perform-action via callService)
+  — not `handleAction` helpers, to stay dependency-free.
+
+## Release flow
+
+Bump `VERSION` in dist/sb-entity-browser.js, commit, tag `vX.Y.Z`, GitHub
+release. HACS: update_information → download (users: Update in HACS), then
+**hard-refresh the browser** (cards are cached aggressively; HACS appends
+`?hacstag=` but a Ctrl-F5 after update is the reliable path).
+
+## Status
+
+- [ ] v0.1.0 initial release
+- Roadmap: Jinja secondary info (WS render_template subscription per row —
+  budget it), numeric bucket presets, group-by domain/area.
