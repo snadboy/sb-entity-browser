@@ -43,6 +43,11 @@ release. HACS: update_information → download (users: Update in HACS), then
       range inputs gate numeric rows, chips gate text rows side by side. Verified headless on
       the Card Lab view (dashboard-monitor/card-lab, 2 test cards: switch.* chips mode,
       sensor.*_battery* mixed mode); zero console errors from the card.
+- [x] v0.2.0: implied leading/trailing wildcards ("battery" = *battery*; blank patterns match
+      nothing); live per-pattern match counts in the editor + diag note; matching = OR within a
+      category, AND across configured categories (patterns ∧ labels ∧ areas — areas new);
+      perform-action with an empty/blank target acts on the clicked row's entity. Lab Batteries
+      card now uses bare "battery" pattern (verified headless: minmax=2, chips=10).
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
