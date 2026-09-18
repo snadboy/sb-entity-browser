@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -186,22 +186,23 @@ class SbEntityBrowser extends HTMLElement {
     const ids = this._matches();
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
-    const numericVals = stateObjs
-      .filter(([, st]) => !["unavailable", "unknown"].includes(st.state))
-      .map(([, st]) => parseFloat(st.state));
+    const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
+    const isNum = (st) => !isBad(st) && st.state !== "" && !isNaN(parseFloat(st.state)) && isFinite(st.state);
+    // Numeric mode when a meaningful numeric population exists (a mixed set —
+    // e.g. battery % sensors alongside battery_state text sensors — gets the
+    // range for the numbers AND chips for the text states).
+    const numericStates = stateObjs.filter(([, st]) => isNum(st));
     const numericMode =
-      numericVals.length > 0 && numericVals.every((v) => !isNaN(v)) &&
-      new Set(stateObjs.map(([, st]) => st.state)).size > 8;
+      numericStates.length >= 8 && new Set(numericStates.map(([, st]) => st.state)).size > 8;
 
-    // Distinct states with counts
+    // Distinct states with counts (numeric mode: only the non-numeric states chip)
     const counts = new Map();
-    for (const [, st] of stateObjs) counts.set(st.state, (counts.get(st.state) || 0) + 1);
+    for (const [, st] of stateObjs)
+      if (!numericMode || !isNum(st)) counts.set(st.state, (counts.get(st.state) || 0) + 1);
 
-    // Filter
+    // Filter: chips gate non-numeric rows; the range gates numeric rows
     let rows = stateObjs.filter(([, st]) => {
-      const bad = ["unavailable", "unknown"].includes(st.state);
-      if (numericMode) {
-        if (bad) return this._selected.size === 0 || this._selected.has(st.state);
+      if (numericMode && isNum(st)) {
         const v = parseFloat(st.state);
         if (this._min !== "" && v < parseFloat(this._min)) return false;
         if (this._max !== "" && v > parseFloat(this._max)) return false;
@@ -232,9 +233,10 @@ class SbEntityBrowser extends HTMLElement {
            <input type="number" class="minmax" id="min" placeholder="min" value="${esc(this._min)}">
            <span class="dash">–</span>
            <input type="number" class="minmax" id="max" placeholder="max" value="${esc(this._max)}">
-           ${["unavailable", "unknown"]
-             .filter((s) => counts.get(s))
-             .map((s) => this._chip(s, counts.get(s)))
+           ${[...counts.entries()]
+             .sort((a, b) => b[1] - a[1])
+             .slice(0, 10)
+             .map(([s, c]) => this._chip(s, c))
              .join("")}
          </div>`
       : `<div class="chips">${[...counts.entries()]
