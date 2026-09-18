@@ -69,6 +69,13 @@ release. HACS: update_information → download (users: Update in HACS), then
       matched set's rolling-hash signature changes, coalesced to 1/s; editor debounces
       config-changed 250ms (per-keystroke preview rebuilds); count refresh throttled 2s on hass
       ticks. LESSON for any list card: gate on change AND throttle, never either alone.
+- [x] v0.4.0 sort_dir (asc/desc; last_changed asc = oldest first — was implicitly newest-first).
+- [x] v0.5.0 word queries + URL override: spaced pattern = word query over id AND friendly_name
+      (any order, case-insensitive, tokens keep */?; spaceless = id-only glob, unchanged);
+      `?seb-<storage_id>=<pattern>` overrides configured patterns at view time (labels/areas
+      still AND), card shows "URL filter" note + tap-to-clear, follows location-changed/popstate.
+      Card Lab: 2 Bubble buttons (FP300/LWR02 Occupancy) deep-link the lab-occ card; verified
+      headless (15 FP300 rows w/ param + note, 30 without).
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
