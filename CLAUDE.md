@@ -48,6 +48,13 @@ release. HACS: update_information → download (users: Update in HACS), then
       category, AND across configured categories (patterns ∧ labels ∧ areas — areas new);
       perform-action with an empty/blank target acts on the clicked row's entity. Lab Batteries
       card now uses bare "battery" pattern (verified headless: minmax=2, chips=10).
+- [x] v0.2.1/v0.3.0: match counts moved into the editor — first as the patterns helper line,
+      then (v0.3.0) as CUSTOM pattern rows: one ha-textfield per pattern with its live count as
+      that field's helper, per-row delete, add button. Rows rebuild only on add/delete (rebuilding
+      per keystroke steals focus — the reason ha-form's text-multiple couldn't do this: one helper
+      per FIELD GROUP only). `list_rows` option: visible-row cap via max-height (~3.3em/row) +
+      overflow-y scroll; render cap 100 → 500 when set. Verified headless (154 switch rows in a
+      33em scroller).
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
