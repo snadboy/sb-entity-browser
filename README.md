@@ -9,8 +9,12 @@ persisted per browser.
 
 ## Features
 
-- **Entity matching** by glob patterns (`sensor.*_battery*`, `switch.rack_*`)
-  and/or entity **labels** — any mix of domains.
+- **Entity matching** by patterns, **labels**, and **areas** — any mix of
+  domains. Patterns are substring matches with implied wildcards (`battery`
+  means `*battery*`; explicit `*`/`?` work too). Within a category any entry
+  matches; across categories every configured one must be satisfied — so
+  patterns + an area means "these entities, in that area". The editor shows a
+  live count of what currently matches, per pattern.
 - **State chips with counts** at the top of the card; tap to filter the list.
   Multi-select, `unavailable`/`unknown` always surface as their own chips.
   When the matched set is numeric (temperatures, batteries), the chips become
@@ -18,6 +22,7 @@ persisted per browser.
 - **Secondary info per row**: any of state, area, device, entity ID, device
   class, last changed, last updated.
 - **Tap actions**: more-info (default), navigate, URL, perform action, none.
+  A perform-action with an empty target acts on the clicked row's entity.
 - **Diagnostics button** (optional, per card): a stethoscope icon that flips
   the card into inspector mode — entity IDs and update stamps on every row,
   unavailable entities first, match counts in the header. Like F12 for your
@@ -39,8 +44,9 @@ All options are in the visual editor. For reference:
 | Option | Meaning |
 |---|---|
 | `title` | Card title |
-| `patterns` | List of entity-id globs (`*` and `?`) |
-| `labels` | Entity registry labels to match (OR'd with patterns) |
+| `patterns` | Entity-id substring globs, implied `*…*` |
+| `labels` | Entities must also carry one of these labels |
+| `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `sort` | `name`, `state`, or `last_changed` |
 | `tap_action` | Standard HA action |

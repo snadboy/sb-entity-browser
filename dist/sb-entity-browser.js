@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -19,8 +19,44 @@ const SECONDARY_OPTIONS = [
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
 
+// Implied leading/trailing wildcards: "battery" matches *battery*.
 const globToRegex = (glob) =>
-  new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  new RegExp(glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."));
+
+const entityAreaId = (hass, id) => {
+  const reg = hass.entities?.[id];
+  return reg?.area_id || hass.devices?.[reg?.device_id]?.area_id || null;
+};
+
+// Matching semantics: within a category any entry matches (OR); across the
+// categories that are configured — patterns ∧ labels ∧ areas — ALL must be
+// satisfied. An empty category doesn't constrain.
+const matchInfo = (hass, config) => {
+  // Index-aligned with config.patterns (blank entries match nothing).
+  const regexes = (config.patterns || []).map((p) => (p && p.trim() ? globToRegex(p) : null));
+  const active = regexes.filter(Boolean).length;
+  const labels = config.labels || [];
+  const areas = config.areas || [];
+  const patCounts = new Array(regexes.length).fill(0);
+  const ids = [];
+  for (const id of Object.keys(hass.states)) {
+    let pOk = active === 0;
+    regexes.forEach((r, i) => {
+      if (r && r.test(id)) {
+        patCounts[i]++;
+        pOk = true;
+      }
+    });
+    if (!pOk) continue;
+    if (labels.length) {
+      const reg = hass.entities?.[id];
+      if (!reg?.labels?.some((l) => labels.includes(l))) continue;
+    }
+    if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
+    ids.push(id);
+  }
+  return { ids, patCounts };
+};
 
 const relTime = (iso) => {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -48,7 +84,7 @@ class SbEntityBrowser extends HTMLElement {
 
   static getStubConfig() {
     return {
-      patterns: ["sensor.*_battery*"],
+      patterns: ["battery"],
       secondary: ["area", "last_changed"],
       tap_action: { action: "more-info" },
       diagnostics_button: true,
@@ -57,8 +93,11 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config || (!(config.patterns || []).length && !(config.labels || []).length)) {
-      throw new Error("Configure at least one entity pattern or label");
+    if (
+      !config ||
+      (!(config.patterns || []).length && !(config.labels || []).length && !(config.areas || []).length)
+    ) {
+      throw new Error("Configure at least one entity pattern, label, or area");
     }
     this._config = {
       secondary: ["state"],
@@ -97,19 +136,7 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _matches() {
-    const h = this._hass;
-    const regexes = (this._config.patterns || []).map(globToRegex);
-    const labels = this._config.labels || [];
-    const out = [];
-    for (const id of Object.keys(h.states)) {
-      let ok = regexes.some((r) => r.test(id));
-      if (!ok && labels.length) {
-        const reg = h.entities?.[id];
-        ok = !!reg?.labels?.some((l) => labels.includes(l));
-      }
-      if (ok) out.push(id);
-    }
-    return out;
+    return matchInfo(this._hass, this._config).ids;
   }
 
   _signature() {
@@ -131,10 +158,7 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _area(id) {
-    const h = this._hass;
-    const reg = h.entities?.[id];
-    const areaId = reg?.area_id || h.devices?.[reg?.device_id]?.area_id;
-    return h.areas?.[areaId]?.name || "";
+    return this._hass.areas?.[entityAreaId(this._hass, id)]?.name || "";
   }
 
   _device(id) {
@@ -173,8 +197,15 @@ class SbEntityBrowser extends HTMLElement {
     } else if (act === "url") window.open(a.url_path, "_blank");
     else if (act === "perform-action" || act === "call-service") {
       const [domain, service] = (a.perform_action || a.service || "").split(".");
+      // A target without any entity/device/area/label falls back to the
+      // clicked row's entity, so one card can act on whichever row is tapped.
+      const t = a.target || {};
+      const hasTarget = ["entity_id", "device_id", "area_id", "label_id", "floor_id"].some(
+        (k) => t[k] != null && (!Array.isArray(t[k]) || t[k].length)
+      );
       if (domain && service)
-        this._hass.callService(domain, service, a.data || a.service_data || {}, a.target || { entity_id: id });
+        this._hass.callService(domain, service, a.data || a.service_data || {},
+          hasTarget ? t : { entity_id: id });
     }
   }
 
@@ -183,7 +214,7 @@ class SbEntityBrowser extends HTMLElement {
     this._sig = this._signature();
     const h = this._hass;
     const cfg = this._config;
-    const ids = this._matches();
+    const { ids, patCounts } = matchInfo(h, cfg);
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
@@ -297,7 +328,12 @@ class SbEntityBrowser extends HTMLElement {
             : ""}
         </div>
         ${chipsHtml}
-        ${this._diag ? `<div class="note">${ids.length} matched · ${rows.length} shown · v${VERSION}</div>` : ""}
+        ${this._diag
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · v${VERSION}${
+              (cfg.patterns || []).length > 1
+                ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
+                : ""}</div>`
+          : ""}
         <div class="list">${rowsHtml || `<div class="empty">No entities match</div>`}</div>
         ${capped ? `<div class="note">List capped at 100 — narrow the filter (diagnostics shows all)</div>` : ""}
       </ha-card>`;
@@ -355,6 +391,16 @@ class SbEntityBrowserEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
+    this._updateCounts();
+  }
+
+  _updateCounts() {
+    if (!this._summary || !this._hass || !this._config) return;
+    const { ids, patCounts } = matchInfo(this._hass, this._config);
+    const parts = (this._config.patterns || []).map((p, i) => `“${p}”: ${patCounts[i]}`);
+    this._summary.textContent =
+      `Matching now: ${ids.length} entit${ids.length === 1 ? "y" : "ies"}` +
+      (parts.length ? ` — ${parts.join(" · ")}` : "");
   }
 
   _render() {
@@ -363,24 +409,39 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._form.computeLabel = (s) =>
         ({
           title: "Title",
-          patterns: "Entity patterns (globs, e.g. sensor.*_battery*)",
-          labels: "Or match entities by label",
+          patterns: "Entity patterns",
+          labels: "Labels",
+          areas: "Areas",
           secondary: "Secondary info fields",
           sort: "Sort by",
           tap_action: "Tap action",
           diagnostics_button: "Show diagnostics (F12) button",
         }[s.name] || s.name);
+      this._form.computeHelper = (s) =>
+        ({
+          patterns:
+            "Substring match with implied wildcards — “battery” means “*battery*” (explicit * and ? work too). Any pattern may match.",
+          labels: "If set, entities must ALSO carry one of these labels.",
+          areas: "If set, entities must ALSO be in one of these areas.",
+          tap_action: "Perform-action with an empty target acts on the clicked entity.",
+        }[s.name]);
       this._form.addEventListener("value-changed", (e) => {
         this._config = { ...this._config, ...e.detail.value };
         fire(this, "config-changed", { config: this._config });
+        this._updateCounts();
       });
       this.appendChild(this._form);
+      this._summary = document.createElement("div");
+      this._summary.style.cssText =
+        "color: var(--secondary-text-color); font-size: .85em; padding: 8px 4px 0; font-style: italic;";
+      this.appendChild(this._summary);
     }
     this._form.hass = this._hass;
     this._form.schema = [
       { name: "title", selector: { text: {} } },
       { name: "patterns", selector: { text: { multiple: true } } },
       { name: "labels", selector: { label: { multiple: true } } },
+      { name: "areas", selector: { area: { multiple: true } } },
       {
         name: "secondary",
         selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } },
@@ -402,6 +463,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       { name: "diagnostics_button", selector: { boolean: {} } },
     ];
     this._form.data = this._config;
+    this._updateCounts();
   }
 }
 
