@@ -63,6 +63,12 @@ release. HACS: update_information → download (users: Update in HACS), then
       defaults to 10 (0 = no limit); scroll height measured from the first rendered row post-rAF
       (em estimates were off). Verified: cards clamp at exactly rows×measured px; editor
       instantiated headless shows visible inputs + per-pattern counts.
+- [x] v0.3.2 PERF (user hit frozen Save): `set hass` fires on EVERY system state change — the
+      old gate re-rendered unconditionally after 2s, so broad patterns = full 500-row rebuild
+      per tick = saturated main thread = Save click never processed. Now: render only when the
+      matched set's rolling-hash signature changes, coalesced to 1/s; editor debounces
+      config-changed 250ms (per-keystroke preview rebuilds); count refresh throttled 2s on hass
+      ticks. LESSON for any list card: gate on change AND throttle, never either alone.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
