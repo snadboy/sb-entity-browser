@@ -55,6 +55,9 @@ release. HACS: update_information → download (users: Update in HACS), then
       per FIELD GROUP only). `list_rows` option: visible-row cap via max-height (~3.3em/row) +
       overflow-y scroll; render cap 100 → 500 when set. Verified headless (154 switch rows in a
       33em scroller).
+- Areas picker stays HA's native `area` selector (looks different from the labels chip-adder —
+  that's upstream's widget inconsistency). Owner decided 2026-09-18: LEAVE AS IS; don't swap it
+  for a chips-style select selector unless asked.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
