@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -92,6 +92,11 @@ class SbEntityBrowser extends HTMLElement {
     this._lastRender = 0;
     this._sig = "";
     this._diag = false;
+    this._search = "";
+    this._bsel = new Set();
+    this._coll = new Set();
+    this._tsubs = new Map();
+    this._tres = new Map();
   }
 
   static getConfigElement() {
@@ -129,8 +134,12 @@ class SbEntityBrowser extends HTMLElement {
       this._min = saved.min ?? "";
       this._max = saved.max ?? "";
       this._diag = !!saved.diag;
+      this._bsel = new Set(saved.bsel || []);
+      this._coll = new Set(saved.coll || []);
     } catch (e) {
       this._selected = new Set();
+      this._bsel = new Set();
+      this._coll = new Set();
       this._min = this._max = "";
     }
     this._sig = "";
@@ -139,6 +148,7 @@ class SbEntityBrowser extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this._searchFocus) return; // don't yank the list mid-typing in the card search
     // hass updates arrive on EVERY state change in the system. Render only
     // when something we display changed, and coalesce bursts to one render
     // per second — a broad pattern otherwise rebuilds hundreds of rows on
@@ -176,11 +186,21 @@ class SbEntityBrowser extends HTMLElement {
     };
     window.addEventListener("location-changed", this._onNav);
     window.addEventListener("popstate", this._onNav);
+    // Keep "Nm ago" honest — those only change when something re-renders.
+    this._tick = setInterval(() => {
+      const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_"));
+      if (needs && this._hass && this._config && !this._searchFocus) {
+        this._sig = "";
+        this._render();
+      }
+    }, 60000);
   }
 
   disconnectedCallback() {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
+    clearInterval(this._tick);
+    this._dropTemplates();
   }
 
   _urlPattern() {
@@ -221,7 +241,8 @@ class SbEntityBrowser extends HTMLElement {
     try {
       localStorage.setItem(
         this._storeKey,
-        JSON.stringify({ states: [...this._selected], min: this._min, max: this._max, diag: this._diag })
+        JSON.stringify({ states: [...this._selected], min: this._min, max: this._max,
+                         diag: this._diag, bsel: [...this._bsel], coll: [...this._coll] })
       );
     } catch (e) {
       /* private mode etc. — filter just won't persist */
@@ -292,22 +313,45 @@ class SbEntityBrowser extends HTMLElement {
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
     const isNum = (st) => !isBad(st) && st.state !== "" && !isNaN(parseFloat(st.state)) && isFinite(st.state);
-    // Numeric mode when a meaningful numeric population exists (a mixed set —
-    // e.g. battery % sensors alongside battery_state text sensors — gets the
-    // range for the numbers AND chips for the text states).
     const numericStates = stateObjs.filter(([, st]) => isNum(st));
     const numericMode =
       numericStates.length >= 8 && new Set(numericStates.map(([, st]) => st.state)).size > 8;
 
-    // Distinct states with counts (numeric mode: only the non-numeric states chip)
+    // Numeric buckets: configured thresholds turn min/max into tappable
+    // range chips with counts (e.g. "20, 50" -> <20 / 20-50 / >50).
+    const thresholds = numericMode
+      ? String(cfg.buckets || "").split(",").map((t) => parseFloat(t)).filter((t) => !isNaN(t)).sort((a, b) => a - b)
+      : [];
+    const bucketOf = (v) => {
+      let i = 0;
+      while (i < thresholds.length && v >= thresholds[i]) i++;
+      return i;
+    };
+    const bucketLabel = (i) =>
+      i === 0 ? `< ${thresholds[0]}` :
+      i === thresholds.length ? `> ${thresholds[thresholds.length - 1]}` :
+      `${thresholds[i - 1]}–${thresholds[i]}`;
+    const bucketCounts = new Array(thresholds.length + 1).fill(0);
+    if (thresholds.length)
+      for (const [, st] of numericStates) bucketCounts[bucketOf(parseFloat(st.state))]++;
+
     const counts = new Map();
     for (const [, st] of stateObjs)
       if (!numericMode || !isNum(st)) counts.set(st.state, (counts.get(st.state) || 0) + 1);
 
-    // Filter: chips gate non-numeric rows; the range gates numeric rows
-    let rows = stateObjs.filter(([, st]) => {
+    // Card search refines WITHIN the matched set. Appending a "match-all"
+    // token forces word-query semantics (id AND friendly name) even for a
+    // single search word.
+    const searchM = cfg.show_search && this._search.trim()
+      ? patternMatcher(this._search.trim() + " *")
+      : null;
+
+    const name = (id, st) => st.attributes.friendly_name || id;
+    let rows = stateObjs.filter(([id, st]) => {
+      if (searchM && !searchM(id, st.attributes.friendly_name)) return false;
       if (numericMode && isNum(st)) {
         const v = parseFloat(st.state);
+        if (thresholds.length) return this._bsel.size === 0 || this._bsel.has(bucketOf(v));
         if (this._min !== "" && v < parseFloat(this._min)) return false;
         if (this._max !== "" && v > parseFloat(this._max)) return false;
         return true;
@@ -315,100 +359,147 @@ class SbEntityBrowser extends HTMLElement {
       return this._selected.size === 0 || this._selected.has(st.state);
     });
 
-    // Sort
-    const name = (id, st) => st.attributes.friendly_name || id;
+    // Sort: group key first (when grouping), then the chosen order.
     const sort = this._diag ? "diag" : cfg.sort || "name";
-    // Ascending base order; sort_dir flips it. For last_changed, ascending =
-    // oldest first (pick descending for newest-first).
     const dir = cfg.sort_dir === "desc" ? -1 : 1;
-    rows.sort(([ia, sa], [ib, sb]) => {
+    const groupBy = cfg.group_by === "area" || cfg.group_by === "domain" ? cfg.group_by : null;
+    const groupOf = (id) => (groupBy === "domain" ? id.split(".")[0] : this._area(id) || "No area");
+    const base = ([ia, sa], [ib, sb]) => {
       if (sort === "diag") {
-        const ba = ["unavailable", "unknown"].includes(sa.state) ? 0 : 1;
-        const bb = ["unavailable", "unknown"].includes(sb.state) ? 0 : 1;
+        const ba = isBad(sa) ? 0 : 1;
+        const bb = isBad(sb) ? 0 : 1;
         if (ba !== bb) return ba - bb;
         return sb.last_changed.localeCompare(sa.last_changed);
       }
       if (sort === "state") return dir * sa.state.localeCompare(sb.state, undefined, { numeric: true });
       if (sort === "last_changed") return dir * sa.last_changed.localeCompare(sb.last_changed);
       return dir * name(ia, sa).localeCompare(name(ib, sb));
+    };
+    rows.sort((a, b) => {
+      if (groupBy) {
+        const g = groupOf(a[0]).localeCompare(groupOf(b[0]));
+        if (g) return g;
+      }
+      return base(a, b);
     });
-    // The list scrolls beyond list_rows (default 10; 0 = no cap). A hard
-    // render cap keeps a broad pattern from flooding the DOM either way.
+
     const listRows = parseInt(cfg.list_rows) || 0;
     const renderCap = 500;
+    const shown = rows.length;
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
-    // Provisional em height only — replaced post-render by measuring the
-    // first real row (text wrapping makes any fixed estimate wrong).
     const scrolls = listRows && rows.length > listRows;
     const listStyle = scrolls
       ? `max-height:${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em; overflow-y:auto;`
       : "";
 
-    const chipsHtml = numericMode
-      ? `<div class="chips">
-           <input type="number" class="minmax" id="min" placeholder="min" value="${esc(this._min)}">
-           <span class="dash">–</span>
-           <input type="number" class="minmax" id="max" placeholder="max" value="${esc(this._max)}">
-           ${[...counts.entries()]
-             .sort((a, b) => b[1] - a[1])
-             .slice(0, 10)
-             .map(([s, c]) => this._chip(s, c))
-             .join("")}
-         </div>`
-      : `<div class="chips">${[...counts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 15)
-          .map(([s, c]) => this._chip(s, c))
-          .join("")}</div>`;
+    const compact = cfg.density === "compact";
+    const pill = cfg.state_style === "pill";
+    const tpl = (cfg.secondary_template || "").trim();
+    const ACTIVE = new Set(["on", "open", "home", "playing", "heat", "cool", "heat_cool", "dry",
+      "fan_only", "auto", "cleaning", "returning", "detected", "running", "charging",
+      "unlocked", "above_horizon", "occupied", "wet"]);
 
-    const rowsHtml = rows
-      .map(([id, st]) => {
-        const bad = ["unavailable", "unknown"].includes(st.state);
-        return `
-        <div class="row ${bad ? "bad" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
+    const chipsRow = (inner) => `<div class="chips">${inner}</div>`;
+    const textChips = (max) => [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, max)
+      .map(([s, c]) => this._chip(s, c)).join("");
+    const chipsHtml = numericMode
+      ? thresholds.length
+        ? chipsRow(bucketCounts.map((c, i) =>
+            `<span class="chip bchip ${this._bsel.has(i) ? "on" : ""}" data-b="${i}">${esc(bucketLabel(i))}<span class="n">${c}</span></span>`).join("") + textChips(8))
+        : chipsRow(`<input type="number" class="minmax" id="min" placeholder="min" value="${esc(this._min)}">
+           <span class="dash">–</span>
+           <input type="number" class="minmax" id="max" placeholder="max" value="${esc(this._max)}">` + textChips(10))
+      : chipsRow(textChips(15));
+
+    const rowHtml = ([id, st]) => {
+      const bad = isBad(st);
+      const act = !bad && ACTIVE.has(st.state);
+      const sec = compact ? "" : this._secondaryText(id, st);
+      return `
+        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
           <ha-state-icon class="icon"></ha-state-icon>
           <div class="body">
             <div class="name">${esc(name(id, st))}</div>
-            <div class="sec">${esc(this._secondaryText(id, st))}</div>
+            ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
+            ${tpl && !compact ? `<div class="jinja">${esc(this._tres.get(id) ?? "")}</div>` : ""}
             ${this._diag ? `<div class="diag-line">${esc(id)} · updated ${esc(relTime(st.last_updated))}</div>` : ""}
           </div>
-          <div class="state">${esc(st.state)}${st.attributes.unit_of_measurement ? " " + esc(st.attributes.unit_of_measurement) : ""}</div>
+          <div class="state ${pill ? "pill" : ""}">${esc(st.state)}${st.attributes.unit_of_measurement ? " " + esc(st.attributes.unit_of_measurement) : ""}</div>
         </div>`;
-      })
-      .join("");
+    };
+
+    let rowsHtml = "";
+    if (groupBy) {
+      let i = 0;
+      while (i < rows.length) {
+        const g = groupOf(rows[i][0]);
+        let j = i;
+        while (j < rows.length && groupOf(rows[j][0]) === g) j++;
+        const coll = this._coll.has(g);
+        rowsHtml += `<div class="grp" data-g="${esc(g)}"><ha-icon icon="mdi:chevron-${coll ? "right" : "down"}"></ha-icon>${esc(g)}<span class="n">${j - i}</span></div>`;
+        if (!coll) rowsHtml += rows.slice(i, j).map(rowHtml).join("");
+        i = j;
+      }
+    } else {
+      rowsHtml = rows.map(rowHtml).join("");
+    }
+
+    const filtered = !!(searchM || this._selected.size || this._bsel.size || this._min !== "" || this._max !== "");
+    const emptyHtml = `<div class="empty"><ha-icon icon="mdi:magnify-remove-outline"></ha-icon><div>No entities match${filtered ? " the current filters" : ""}</div></div>`;
 
     this.shadowRoot.innerHTML = `
       <style>
         ha-card { padding: 12px 16px 8px; }
         .header { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 1.2em; font-weight: 500; flex: 1; color: var(--primary-text-color); }
+        .count { color: var(--secondary-text-color); font-size: .85em; }
         .diag-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
         .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
+        .searchbox { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 8px 12px; font: inherit;
+                     color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12));
+                     border: none; border-bottom: 1px solid var(--divider-color); border-radius: 4px 4px 0 0;
+                     outline-color: var(--primary-color); }
         .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
         .chip { cursor: pointer; user-select: none; font-size: .85em; padding: 3px 10px; border-radius: 12px;
-                border: 1px solid var(--divider-color); color: var(--secondary-text-color); }
+                border: 1px solid var(--divider-color); color: var(--secondary-text-color);
+                transition: background .12s, color .12s; }
         .chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
         .chip .n { opacity: .7; margin-left: 4px; }
         .minmax { width: 70px; background: none; border: 1px solid var(--divider-color); border-radius: 8px;
                   color: var(--primary-text-color); padding: 3px 8px; }
         .dash { color: var(--secondary-text-color); align-self: center; }
-        .row { display: flex; align-items: center; gap: 12px; padding: 7px 0; cursor: pointer;
-               border-radius: 8px; }
+        .grp { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+               padding: 10px 0 2px; color: var(--secondary-text-color); font-size: .78em;
+               font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+        .grp .n { opacity: .6; font-weight: 400; }
+        .grp ha-icon { --mdc-icon-size: 16px; }
+        .row { display: flex; align-items: center; gap: 12px; padding: 7px 0; cursor: pointer; border-radius: 8px; }
+        .row.cmp { padding: 3px 0; }
+        .list.anim .row { animation: seb-fade .18s ease-out; }
+        @keyframes seb-fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
         .row:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .05); }
         .row.bad .state { color: var(--error-color); }
+        .row.act .state { color: var(--primary-color); }
         .icon { color: var(--state-icon-color, var(--paper-item-icon-color)); flex: none; }
         .body { flex: 1; min-width: 0; }
         .name { color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sec, .diag-line { color: var(--secondary-text-color); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sec, .jinja, .diag-line { color: var(--secondary-text-color); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .diag-line { font-family: monospace; font-size: .78em; }
         .state { color: var(--primary-text-color); font-weight: 500; white-space: nowrap; }
-        .empty, .note { color: var(--secondary-text-color); font-style: italic; padding: 12px 0; }
-        .note { font-size: .8em; padding: 4px 0; }
+        .state.pill { font-size: .85em; font-weight: 500; padding: 3px 10px; border-radius: 12px;
+                      background: rgba(var(--rgb-primary-text-color, 0,0,0), .06); }
+        .row.act .state.pill { background: rgba(var(--rgb-primary-color, 33,150,243), .15); }
+        .row.bad .state.pill { background: rgba(var(--rgb-error-color, 244,67,54), .12); }
+        .empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0;
+                 color: var(--secondary-text-color); font-style: italic; }
+        .empty ha-icon { --mdc-icon-size: 32px; opacity: .5; }
+        .note { color: var(--secondary-text-color); font-style: italic; font-size: .8em; padding: 4px 0; }
       </style>
       <ha-card>
         <div class="header">
           <div class="title">${esc(cfg.title || "")}</div>
+          <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
           ${cfg.diagnostics_button
             ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
             : ""}
@@ -416,18 +507,25 @@ class SbEntityBrowser extends HTMLElement {
         ${urlPat
           ? `<div class="note">URL filter: “${esc(urlPat)}” · <span class="url-clear" style="cursor:pointer; color:var(--primary-color); font-style:normal;">show configured</span></div>`
           : ""}
+        ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · v${VERSION}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
           : ""}
-        <div class="list" style="${listStyle}">${rowsHtml || `<div class="empty">No entities match</div>`}</div>
+        <div class="list ${this._animate ? "anim" : ""}" style="${listStyle}">${rowsHtml || emptyHtml}</div>
         ${capped ? `<div class="note">List capped at ${renderCap} — narrow the filter (diagnostics shows all)</div>` : ""}
       </ha-card>`;
+    this._animate = false;
 
     // Wire up
+    const rerender = () => {
+      this._animate = true;
+      this._persist();
+      this._render();
+    };
     this.shadowRoot.querySelectorAll(".row").forEach((el) => {
       const id = el.dataset.entity;
       const icon = el.querySelector("ha-state-icon");
@@ -438,29 +536,60 @@ class SbEntityBrowser extends HTMLElement {
       el.addEventListener("click", () => this._handleTap(id));
       el.addEventListener("keydown", (e) => e.key === "Enter" && this._handleTap(id));
     });
-    this.shadowRoot.querySelectorAll(".chip").forEach((el) => {
+    this.shadowRoot.querySelectorAll(".chip:not(.bchip)").forEach((el) => {
       el.addEventListener("click", () => {
         const s = el.dataset.state;
         this._selected.has(s) ? this._selected.delete(s) : this._selected.add(s);
-        this._persist();
-        this._render();
+        rerender();
+      });
+    });
+    this.shadowRoot.querySelectorAll(".bchip").forEach((el) => {
+      el.addEventListener("click", () => {
+        const i = Number(el.dataset.b);
+        this._bsel.has(i) ? this._bsel.delete(i) : this._bsel.add(i);
+        rerender();
+      });
+    });
+    this.shadowRoot.querySelectorAll(".grp").forEach((el) => {
+      el.addEventListener("click", () => {
+        const g = el.dataset.g;
+        this._coll.has(g) ? this._coll.delete(g) : this._coll.add(g);
+        rerender();
       });
     });
     const diagBtn = this.shadowRoot.querySelector(".diag-btn");
     if (diagBtn)
       diagBtn.addEventListener("click", () => {
         this._diag = !this._diag;
-        this._persist();
-        this._render();
+        rerender();
       });
     for (const key of ["min", "max"]) {
       const inp = this.shadowRoot.getElementById(key);
       if (inp)
         inp.addEventListener("change", () => {
           this[`_${key}`] = inp.value;
-          this._persist();
-          this._render();
+          rerender();
         });
+    }
+    const sb = this.shadowRoot.querySelector(".searchbox");
+    if (sb) {
+      sb.addEventListener("focus", () => (this._searchFocus = true));
+      sb.addEventListener("blur", () => {
+        this._searchFocus = false;
+        this._sig = "";
+      });
+      sb.addEventListener("input", () => {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => {
+          this._search = sb.value;
+          this._animate = true;
+          this._render();
+        }, 250);
+      });
+      if (this._searchFocus) {
+        sb.focus();
+        sb.setSelectionRange(sb.value.length, sb.value.length);
+      }
     }
     if (scrolls) {
       const listEl = this.shadowRoot.querySelector(".list");
@@ -478,10 +607,57 @@ class SbEntityBrowser extends HTMLElement {
         history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
         this._onNav?.();
       });
+
+    // Jinja secondary info: subscriptions exist ONLY for rows currently in
+    // the DOM (filtered, capped, not inside a collapsed group) — the whole
+    // point is that a broad pattern costs nothing until rows are visible.
+    clearTimeout(this._tplTimer);
+    this._tplTimer = setTimeout(() => {
+      const vis = [...this.shadowRoot.querySelectorAll(".row")].map((e) => e.dataset.entity);
+      this._syncTemplates(vis);
+    }, 300);
   }
 
   _chip(state, count) {
     return `<span class="chip ${this._selected.has(state) ? "on" : ""}" data-state="${esc(state)}">${esc(state)}<span class="n">${count}</span></span>`;
+  }
+
+  _dropTemplates() {
+    for (const p of this._tsubs.values()) p.then((u) => u()).catch(() => {});
+    this._tsubs.clear();
+    this._tres.clear();
+  }
+
+  _syncTemplates(visibleIds) {
+    const tpl = (this._config?.secondary_template || "").trim();
+    if (tpl !== this._tplStr) {
+      this._dropTemplates();
+      this._tplStr = tpl;
+    }
+    if (!tpl || this._config.density === "compact") {
+      if (this._tsubs.size) this._dropTemplates();
+      return;
+    }
+    const want = new Set(visibleIds);
+    for (const [id, p] of this._tsubs)
+      if (!want.has(id)) {
+        p.then((u) => u()).catch(() => {});
+        this._tsubs.delete(id);
+        this._tres.delete(id);
+      }
+    for (const id of want)
+      if (!this._tsubs.has(id)) {
+        const p = this._hass.connection.subscribeMessage(
+          (msg) => {
+            this._tres.set(id, msg.result ?? "");
+            const el = this.shadowRoot.querySelector(`.row[data-entity="${CSS.escape(id)}"] .jinja`);
+            if (el) el.textContent = this._tres.get(id);
+          },
+          { type: "render_template", template: tpl, variables: { entity_id: id } }
+        );
+        p.catch(() => this._tsubs.delete(id));
+        this._tsubs.set(id, p);
+      }
   }
 }
 
@@ -614,6 +790,9 @@ class SbEntityBrowserEditor extends HTMLElement {
         list_rows: "The list scrolls beyond this many rows. Default 10; 0 = no limit.",
         sort_dir: "For Last changed: ascending = oldest first.",
         tap_action: "Perform-action with an empty target acts on the clicked entity.",
+        secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
+        buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 \u2192 chips <20 \u00b7 20\u201350 \u00b7 >50. Empty = min/max inputs.",
+        show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
       };
       const labelMap = {
         title: "Title",
@@ -622,6 +801,12 @@ class SbEntityBrowserEditor extends HTMLElement {
         secondary: "Secondary info fields",
         sort: "Sort by",
         sort_dir: "Sort direction",
+        secondary_template: "Jinja secondary line",
+        buckets: "Numeric buckets",
+        state_style: "State display",
+        density: "Density",
+        group_by: "Group by",
+        show_search: "Show search box",
         list_rows: "Max visible rows",
         tap_action: "Tap action",
         diagnostics_button: "Show diagnostics (F12) button",
@@ -654,6 +839,46 @@ class SbEntityBrowserEditor extends HTMLElement {
           name: "secondary",
           selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } },
         },
+        {
+          name: "group_by",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "none", label: "No grouping" },
+                { value: "area", label: "Area" },
+                { value: "domain", label: "Domain" },
+              ],
+            },
+          },
+        },
+        {
+          name: "density",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "comfortable", label: "Comfortable (two lines)" },
+                { value: "compact", label: "Compact (one line)" },
+              ],
+            },
+          },
+        },
+        {
+          name: "state_style",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "text", label: "Text" },
+                { value: "pill", label: "Pill" },
+              ],
+            },
+          },
+        },
+        { name: "secondary_template", selector: { text: { multiline: true } } },
+        { name: "buckets", selector: { text: {} } },
+        { name: "show_search", selector: { boolean: {} } },
         {
           name: "sort",
           selector: {
