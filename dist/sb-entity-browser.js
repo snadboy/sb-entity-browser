@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -123,13 +123,23 @@ class SbEntityBrowser extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    // Cheap change gate: re-render at most every 2s unless our entities changed.
-    const now = Date.now();
-    if (now - this._lastRender < 2000 && this._sig) {
-      const sig = this._signature();
-      if (sig === this._sig) return;
+    // hass updates arrive on EVERY state change in the system. Render only
+    // when something we display changed, and coalesce bursts to one render
+    // per second — a broad pattern otherwise rebuilds hundreds of rows on
+    // every tick and saturates the main thread (the editor's Save click
+    // never gets processed).
+    if (this._renderQueued) return;
+    if (this._sig && this._signature() === this._sig) return;
+    const since = Date.now() - this._lastRender;
+    if (since >= 1000) {
+      this._render();
+    } else {
+      this._renderQueued = true;
+      setTimeout(() => {
+        this._renderQueued = false;
+        this._render();
+      }, 1000 - since);
     }
-    this._render();
   }
 
   getCardSize() {
@@ -141,10 +151,19 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _signature() {
+    // Rolling hash instead of a joined string: a broad pattern matching
+    // thousands of entities would otherwise allocate a ~100 KB string on
+    // every hass tick just to compare it.
     const h = this._hass;
-    return this._matches()
-      .map((id) => id + "|" + h.states[id].state + "|" + h.states[id].last_updated)
-      .join(";");
+    let acc = 0;
+    let n = 0;
+    for (const id of this._matches()) {
+      const st = h.states[id];
+      const s = id + st.state + st.last_updated;
+      for (let i = 0; i < s.length; i++) acc = (acc * 31 + s.charCodeAt(i)) | 0;
+      n++;
+    }
+    return n + ":" + acc;
   }
 
   _persist() {
@@ -410,11 +429,20 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._hass = hass;
     if (this._formTop) this._formTop.hass = hass;
     if (this._formRest) this._formRest.hass = hass;
-    this._refreshCounts();
+    // hass ticks are frequent; the counts don't need sub-second freshness.
+    const now = Date.now();
+    if (now - (this._lastCounts || 0) > 2000) {
+      this._lastCounts = now;
+      this._refreshCounts();
+    }
   }
 
+  // Debounced: emitting per keystroke makes the dialog re-render the preview
+  // card on every character, which is what made typing sluggish.
   _emit() {
-    fire(this, "config-changed", { config: this._config });
+    clearTimeout(this._emitTimer);
+    this._emitTimer = setTimeout(
+      () => fire(this, "config-changed", { config: this._config }), 250);
   }
 
   _count(p) {
