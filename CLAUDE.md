@@ -79,6 +79,16 @@ release. HACS: update_information → download (users: Update in HACS), then
 - Card Lab view (dashboard-monitor/card-lab) is the card's permanent demo/test home for now —
   owner reviewed v0.5.0 and said to LEAVE the buttons + Occupancy/Switches/Batteries cards there
   (2026-09-18); don't promote or clean up without asking.
+- [x] v0.6.0 "implement all": Jinja secondary_template — one render_template WS subscription
+      per row IN THE DOM (filtered/capped/uncollapsed), diffed 300ms after each render, torn down
+      on filter-out/disconnect; `entity_id` variable. Numeric buckets (thresholds "20, 50" →
+      range chips w/ counts, _bsel persisted). group_by area/domain (collapsible, _coll
+      persisted). state_style pill + ACTIVE-state accent coloring. density compact. Header
+      shown/matched count. show_search box (word-query; hass renders SKIPPED while focused,
+      focus restored across re-renders). 60s relative-time tick. Fade-in only on filter
+      interactions (this._animate flag — constant fade would flicker on live updates).
+      Verified headless: groups+pills+search+jinja models on Occupancy, bucket chips + 344
+      compact pill rows on Batteries, zero page errors.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
