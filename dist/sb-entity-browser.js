@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -256,8 +256,17 @@ class SbEntityBrowser extends HTMLElement {
       if (sort === "last_changed") return sb.last_changed.localeCompare(sa.last_changed);
       return name(ia, sa).localeCompare(name(ib, sb));
     });
-    const capped = rows.length > 100 && !this._diag;
-    if (capped) rows = rows.slice(0, 100);
+    // With a visible-row cap the list scrolls, so render generously; without
+    // one keep the old hard cap so a broad pattern can't flood the DOM.
+    const listRows = parseInt(cfg.list_rows) || 0;
+    const renderCap = listRows ? 500 : 100;
+    const capped = rows.length > renderCap && !this._diag;
+    if (capped) rows = rows.slice(0, renderCap);
+    // Approximate row height (two text lines + padding); diagnostics adds a line.
+    const rowEm = this._diag ? 4.1 : 3.3;
+    const listStyle = listRows && rows.length > listRows
+      ? `max-height:${(listRows * rowEm).toFixed(1)}em; overflow-y:auto;`
+      : "";
 
     const chipsHtml = numericMode
       ? `<div class="chips">
@@ -334,8 +343,8 @@ class SbEntityBrowser extends HTMLElement {
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
           : ""}
-        <div class="list">${rowsHtml || `<div class="empty">No entities match</div>`}</div>
-        ${capped ? `<div class="note">List capped at 100 — narrow the filter (diagnostics shows all)</div>` : ""}
+        <div class="list" style="${listStyle}">${rowsHtml || `<div class="empty">No entities match</div>`}</div>
+        ${capped ? `<div class="note">List capped at ${renderCap} — narrow the filter (diagnostics shows all)</div>` : ""}
       </ha-card>`;
 
     // Wire up
@@ -390,78 +399,161 @@ class SbEntityBrowserEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._form) this._form.hass = hass;
+    if (this._formTop) this._formTop.hass = hass;
+    if (this._formRest) this._formRest.hass = hass;
+    this._refreshCounts();
   }
 
-  // Live match counts, rendered as the patterns field's helper text so they
-  // sit right under the inputs (a summary appended below the form ends up
-  // below the fold and is never seen).
-  _patternsHelper() {
-    const base = "Substring match with implied wildcards — “battery” means “*battery*”.";
-    if (!this._hass || !this._config) return base;
-    const { ids, patCounts } = matchInfo(this._hass, this._config);
-    const parts = (this._config.patterns || [])
-      .filter((p) => p && p.trim())
-      .map((p, i) => `“${p}”: ${patCounts[i]}`);
-    return `Matching now: ${ids.length} entit${ids.length === 1 ? "y" : "ies"}` +
-      (parts.length > 1 ? ` (${parts.join(" · ")})` : "") + `. ${base}`;
+  _emit() {
+    fire(this, "config-changed", { config: this._config });
+  }
+
+  _count(p) {
+    if (!this._hass || !p || !p.trim()) return null;
+    const r = globToRegex(p);
+    let n = 0;
+    for (const id of Object.keys(this._hass.states)) if (r.test(id)) n++;
+    return n;
+  }
+
+  // Each pattern row's helper line shows its own live match count.
+  _refreshCounts() {
+    (this._patRows || []).forEach((tf) => {
+      const n = this._count(tf.value);
+      tf.helper =
+        n == null
+          ? "Implied *…* wildcards — “battery” means “*battery*”"
+          : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
+      tf.helperPersistent = true;
+    });
+  }
+
+  // Rebuild the pattern rows only when the row COUNT changes (add/delete);
+  // on ordinary re-renders just sync values, skipping the focused field —
+  // rebuilding on every keystroke would steal focus.
+  _renderPatterns() {
+    const pats = this._config.patterns || [];
+    if (this._patRows && this._patRows.length === pats.length) {
+      this._patRows.forEach((tf, i) => {
+        if (document.activeElement !== tf && tf.value !== (pats[i] || "")) tf.value = pats[i] || "";
+      });
+      this._refreshCounts();
+      return;
+    }
+    this._patWrap.innerHTML = "";
+    this._patRows = [];
+    pats.forEach((p, i) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex; align-items:flex-start; gap:4px; margin-bottom:8px;";
+      const tf = document.createElement("ha-textfield");
+      tf.label = `Pattern ${i + 1}`;
+      tf.value = p || "";
+      tf.style.cssText = "flex:1;";
+      tf.addEventListener("input", () => {
+        const arr = [...(this._config.patterns || [])];
+        arr[i] = tf.value;
+        this._config = { ...this._config, patterns: arr };
+        this._refreshCounts();
+        this._emit();
+      });
+      const del = document.createElement("ha-icon");
+      del.icon = "mdi:delete-outline";
+      del.title = "Remove pattern";
+      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:16px 8px 0 4px;";
+      del.addEventListener("click", () => {
+        const arr = [...(this._config.patterns || [])];
+        arr.splice(i, 1);
+        this._config = { ...this._config, patterns: arr };
+        this._renderPatterns();
+        this._emit();
+      });
+      row.append(tf, del);
+      this._patWrap.appendChild(row);
+      this._patRows.push(tf);
+    });
+    const add = document.createElement("div");
+    add.style.cssText =
+      "display:inline-flex; align-items:center; gap:4px; cursor:pointer; color:var(--primary-color); font-size:.95em; padding:2px 4px 10px;";
+    add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add pattern`;
+    add.addEventListener("click", () => {
+      this._config = { ...this._config, patterns: [...(this._config.patterns || []), ""] };
+      this._renderPatterns();
+      this._patRows[this._patRows.length - 1]?.focus();
+    });
+    this._patWrap.appendChild(add);
+    this._refreshCounts();
   }
 
   _render() {
-    if (!this._form) {
-      this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) =>
-        ({
-          title: "Title",
-          patterns: "Entity patterns",
-          labels: "Labels",
-          areas: "Areas",
-          secondary: "Secondary info fields",
-          sort: "Sort by",
-          tap_action: "Tap action",
-          diagnostics_button: "Show diagnostics (F12) button",
-        }[s.name] || s.name);
-      this._form.computeHelper = (s) => {
-        if (s.name === "patterns") return this._patternsHelper();
-        return {
-          labels: "If set, entities must ALSO carry one of these labels.",
-          areas: "If set, entities must ALSO be in one of these areas.",
-          tap_action: "Perform-action with an empty target acts on the clicked entity.",
-        }[s.name];
+    if (!this._formTop) {
+      const helperMap = {
+        labels: "If set, entities must ALSO carry one of these labels.",
+        areas: "If set, entities must ALSO be in one of these areas.",
+        list_rows: "The list scrolls beyond this many rows. Empty = no limit.",
+        tap_action: "Perform-action with an empty target acts on the clicked entity.",
       };
-      this._form.addEventListener("value-changed", (e) => {
-        this._config = { ...this._config, ...e.detail.value };
-        fire(this, "config-changed", { config: this._config });
-      });
-      this.appendChild(this._form);
-    }
-    this._form.hass = this._hass;
-    this._form.schema = [
-      { name: "title", selector: { text: {} } },
-      { name: "patterns", selector: { text: { multiple: true } } },
-      { name: "labels", selector: { label: { multiple: true } } },
-      { name: "areas", selector: { area: { multiple: true } } },
-      {
-        name: "secondary",
-        selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } },
-      },
-      {
-        name: "sort",
-        selector: {
-          select: {
-            mode: "dropdown",
-            options: [
-              { value: "name", label: "Name" },
-              { value: "state", label: "State" },
-              { value: "last_changed", label: "Last changed" },
-            ],
+      const labelMap = {
+        title: "Title",
+        labels: "Labels",
+        areas: "Areas",
+        secondary: "Secondary info fields",
+        sort: "Sort by",
+        list_rows: "Max visible rows",
+        tap_action: "Tap action",
+        diagnostics_button: "Show diagnostics (F12) button",
+      };
+      const mkForm = (schema) => {
+        const f = document.createElement("ha-form");
+        f.schema = schema;
+        f.computeLabel = (s) => labelMap[s.name] || s.name;
+        f.computeHelper = (s) => helperMap[s.name];
+        f.addEventListener("value-changed", (e) => {
+          this._config = { ...this._config, ...e.detail.value };
+          this._emit();
+        });
+        return f;
+      };
+      this._formTop = mkForm([{ name: "title", selector: { text: {} } }]);
+      this.appendChild(this._formTop);
+
+      const patLabel = document.createElement("div");
+      patLabel.textContent = "Entity patterns";
+      patLabel.style.cssText = "padding: 16px 0 8px; color: var(--primary-text-color);";
+      this.appendChild(patLabel);
+      this._patWrap = document.createElement("div");
+      this.appendChild(this._patWrap);
+
+      this._formRest = mkForm([
+        { name: "labels", selector: { label: { multiple: true } } },
+        { name: "areas", selector: { area: { multiple: true } } },
+        {
+          name: "secondary",
+          selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } },
+        },
+        {
+          name: "sort",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "name", label: "Name" },
+                { value: "state", label: "State" },
+                { value: "last_changed", label: "Last changed" },
+              ],
+            },
           },
         },
-      },
-      { name: "tap_action", selector: { ui_action: {} } },
-      { name: "diagnostics_button", selector: { boolean: {} } },
-    ];
-    this._form.data = this._config;
+        { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
+        { name: "tap_action", selector: { ui_action: {} } },
+        { name: "diagnostics_button", selector: { boolean: {} } },
+      ]);
+      this.appendChild(this._formRest);
+    }
+    this._formTop.hass = this._hass;
+    this._formRest.hass = this._hass;
+    this._formTop.data = this._config;
+    this._formRest.data = this._config;
+    this._renderPatterns();
   }
 }
 

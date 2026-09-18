@@ -13,8 +13,8 @@ persisted per browser.
   domains. Patterns are substring matches with implied wildcards (`battery`
   means `*battery*`; explicit `*`/`?` work too). Within a category any entry
   matches; across categories every configured one must be satisfied — so
-  patterns + an area means "these entities, in that area". The editor shows a
-  live count of what currently matches, per pattern.
+  patterns + an area means "these entities, in that area". Each pattern field in the editor
+  shows its own live match count directly beneath it.
 - **State chips with counts** at the top of the card; tap to filter the list.
   Multi-select, `unavailable`/`unknown` always surface as their own chips.
   When the matched set is numeric (temperatures, batteries), the chips become
@@ -49,6 +49,7 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `sort` | `name`, `state`, or `last_changed` |
+| `list_rows` | Max visible rows; the list scrolls beyond this (empty = no cap) |
 | `tap_action` | Standard HA action |
 | `diagnostics_button` | Show the F12-style toggle |
 | `storage_id` | Key for the per-browser filter persistence (auto-generated) |
