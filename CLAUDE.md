@@ -38,6 +38,12 @@ release. HACS: update_information → download (users: Update in HACS), then
 
 ## Status
 
-- [ ] v0.1.0 initial release
+- [x] v0.1.0 released 2026-09-18; installed via HACS (repo id 1376132759), resource auto-registered
+- [x] v0.1.1: numeric mode engages on mixed sets (>=8 numeric entities, >8 distinct values) —
+      range inputs gate numeric rows, chips gate text rows side by side. Verified headless on
+      the Card Lab view (dashboard-monitor/card-lab, 2 test cards: switch.* chips mode,
+      sensor.*_battery* mixed mode); zero console errors from the card.
+- Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
+  hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
   budget it), numeric bucket presets, group-by domain/area.
