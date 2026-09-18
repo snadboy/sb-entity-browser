@@ -58,6 +58,11 @@ release. HACS: update_information → download (users: Update in HACS), then
 - Areas picker stays HA's native `area` selector (looks different from the labels chip-adder —
   that's upstream's widget inconsistency). Owner decided 2026-09-18: LEAVE AS IS; don't swap it
   for a chips-style select selector unless asked.
+- [x] v0.3.1: pattern inputs are plain <input>s — bare `ha-textfield` outside ha-form is a TRAP
+      (lazily defined + pre-upgrade property sets get shadowed → renders invisible). list_rows
+      defaults to 10 (0 = no limit); scroll height measured from the first rendered row post-rAF
+      (em estimates were off). Verified: cards clamp at exactly rows×measured px; editor
+      instantiated headless shows visible inputs + per-pattern counts.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
