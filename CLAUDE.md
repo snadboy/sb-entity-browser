@@ -76,6 +76,9 @@ release. HACS: update_information → download (users: Update in HACS), then
       still AND), card shows "URL filter" note + tap-to-clear, follows location-changed/popstate.
       Card Lab: 2 Bubble buttons (FP300/LWR02 Occupancy) deep-link the lab-occ card; verified
       headless (15 FP300 rows w/ param + note, 30 without).
+- Card Lab view (dashboard-monitor/card-lab) is the card's permanent demo/test home for now —
+  owner reviewed v0.5.0 and said to LEAVE the buttons + Occupancy/Switches/Batteries cards there
+  (2026-09-18); don't promote or clean up without asking.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
