@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -103,6 +103,7 @@ class SbEntityBrowser extends HTMLElement {
       secondary: ["state"],
       tap_action: { action: "more-info" },
       sort: "name",
+      list_rows: 10,
       ...config,
     };
     this._storeKey = `sb-entity-browser-${this._config.storage_id || "default"}`;
@@ -256,16 +257,17 @@ class SbEntityBrowser extends HTMLElement {
       if (sort === "last_changed") return sb.last_changed.localeCompare(sa.last_changed);
       return name(ia, sa).localeCompare(name(ib, sb));
     });
-    // With a visible-row cap the list scrolls, so render generously; without
-    // one keep the old hard cap so a broad pattern can't flood the DOM.
+    // The list scrolls beyond list_rows (default 10; 0 = no cap). A hard
+    // render cap keeps a broad pattern from flooding the DOM either way.
     const listRows = parseInt(cfg.list_rows) || 0;
-    const renderCap = listRows ? 500 : 100;
+    const renderCap = 500;
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
-    // Approximate row height (two text lines + padding); diagnostics adds a line.
-    const rowEm = this._diag ? 4.1 : 3.3;
-    const listStyle = listRows && rows.length > listRows
-      ? `max-height:${(listRows * rowEm).toFixed(1)}em; overflow-y:auto;`
+    // Provisional em height only — replaced post-render by measuring the
+    // first real row (text wrapping makes any fixed estimate wrong).
+    const scrolls = listRows && rows.length > listRows;
+    const listStyle = scrolls
+      ? `max-height:${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em; overflow-y:auto;`
       : "";
 
     const chipsHtml = numericMode
@@ -382,6 +384,13 @@ class SbEntityBrowser extends HTMLElement {
           this._render();
         });
     }
+    if (scrolls) {
+      const listEl = this.shadowRoot.querySelector(".list");
+      requestAnimationFrame(() => {
+        const r0 = listEl?.querySelector(".row");
+        if (r0?.offsetHeight) listEl.style.maxHeight = r0.offsetHeight * listRows + "px";
+      });
+    }
   }
 
   _chip(state, count) {
@@ -416,26 +425,29 @@ class SbEntityBrowserEditor extends HTMLElement {
     return n;
   }
 
-  // Each pattern row's helper line shows its own live match count.
+  // Each pattern row's count line lives directly under its input.
   _refreshCounts() {
-    (this._patRows || []).forEach((tf) => {
-      const n = this._count(tf.value);
-      tf.helper =
+    (this._patRows || []).forEach(({ input, count }) => {
+      const n = this._count(input.value);
+      count.textContent =
         n == null
           ? "Implied *…* wildcards — “battery” means “*battery*”"
           : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
-      tf.helperPersistent = true;
     });
   }
 
   // Rebuild the pattern rows only when the row COUNT changes (add/delete);
   // on ordinary re-renders just sync values, skipping the focused field —
-  // rebuilding on every keystroke would steal focus.
+  // rebuilding on every keystroke would steal focus. Plain <input>s, NOT
+  // ha-textfield: that component isn't reliably defined outside ha-form's
+  // lazy loading, and pre-upgrade property sets are shadowed (rendered as an
+  // invisible unknown element).
   _renderPatterns() {
     const pats = this._config.patterns || [];
     if (this._patRows && this._patRows.length === pats.length) {
-      this._patRows.forEach((tf, i) => {
-        if (document.activeElement !== tf && tf.value !== (pats[i] || "")) tf.value = pats[i] || "";
+      this._patRows.forEach(({ input }, i) => {
+        if (document.activeElement !== input && input.value !== (pats[i] || ""))
+          input.value = pats[i] || "";
       });
       this._refreshCounts();
       return;
@@ -443,15 +455,23 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._patWrap.innerHTML = "";
     this._patRows = [];
     pats.forEach((p, i) => {
+      const block = document.createElement("div");
+      block.style.cssText = "margin-bottom:10px;";
       const row = document.createElement("div");
-      row.style.cssText = "display:flex; align-items:flex-start; gap:4px; margin-bottom:8px;";
-      const tf = document.createElement("ha-textfield");
-      tf.label = `Pattern ${i + 1}`;
-      tf.value = p || "";
-      tf.style.cssText = "flex:1;";
-      tf.addEventListener("input", () => {
+      row.style.cssText = "display:flex; align-items:center; gap:4px;";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = p || "";
+      input.placeholder = "e.g. battery or switch.rack_*";
+      input.autocomplete = "off";
+      input.style.cssText =
+        "flex:1; box-sizing:border-box; font:inherit; color:var(--primary-text-color);" +
+        "background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12));" +
+        "border:none; border-bottom:1px solid var(--divider-color);" +
+        "border-radius:4px 4px 0 0; padding:14px 12px; outline-color:var(--primary-color);";
+      input.addEventListener("input", () => {
         const arr = [...(this._config.patterns || [])];
-        arr[i] = tf.value;
+        arr[i] = input.value;
         this._config = { ...this._config, patterns: arr };
         this._refreshCounts();
         this._emit();
@@ -459,7 +479,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const del = document.createElement("ha-icon");
       del.icon = "mdi:delete-outline";
       del.title = "Remove pattern";
-      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:16px 8px 0 4px;";
+      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:8px 8px 8px 4px;";
       del.addEventListener("click", () => {
         const arr = [...(this._config.patterns || [])];
         arr.splice(i, 1);
@@ -467,9 +487,13 @@ class SbEntityBrowserEditor extends HTMLElement {
         this._renderPatterns();
         this._emit();
       });
-      row.append(tf, del);
-      this._patWrap.appendChild(row);
-      this._patRows.push(tf);
+      row.append(input, del);
+      const count = document.createElement("div");
+      count.style.cssText =
+        "color:var(--secondary-text-color); font-size:.8em; padding:3px 12px 0;";
+      block.append(row, count);
+      this._patWrap.appendChild(block);
+      this._patRows.push({ input, count });
     });
     const add = document.createElement("div");
     add.style.cssText =
@@ -478,7 +502,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     add.addEventListener("click", () => {
       this._config = { ...this._config, patterns: [...(this._config.patterns || []), ""] };
       this._renderPatterns();
-      this._patRows[this._patRows.length - 1]?.focus();
+      this._patRows[this._patRows.length - 1]?.input.focus();
     });
     this._patWrap.appendChild(add);
     this._refreshCounts();
@@ -489,7 +513,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const helperMap = {
         labels: "If set, entities must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
-        list_rows: "The list scrolls beyond this many rows. Empty = no limit.",
+        list_rows: "The list scrolls beyond this many rows. Default 10; 0 = no limit.",
         tap_action: "Perform-action with an empty target acts on the clicked entity.",
       };
       const labelMap = {
@@ -543,7 +567,7 @@ class SbEntityBrowserEditor extends HTMLElement {
             },
           },
         },
-        { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
+        { name: "list_rows", selector: { number: { min: 0, max: 50, mode: "box" } } },
         { name: "tap_action", selector: { ui_action: {} } },
         { name: "diagnostics_button", selector: { boolean: {} } },
       ]);
