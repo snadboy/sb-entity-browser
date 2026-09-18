@@ -49,6 +49,7 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `sort` | `name`, `state`, or `last_changed` |
+| `sort_dir` | `asc` (default) or `desc` |
 | `list_rows` | Max visible rows; the list scrolls beyond this (empty = no cap) |
 | `tap_action` | Standard HA action |
 | `diagnostics_button` | Show the F12-style toggle |

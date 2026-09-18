@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.3.2";
+const VERSION = "0.4.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -265,6 +265,9 @@ class SbEntityBrowser extends HTMLElement {
     // Sort
     const name = (id, st) => st.attributes.friendly_name || id;
     const sort = this._diag ? "diag" : cfg.sort || "name";
+    // Ascending base order; sort_dir flips it. For last_changed, ascending =
+    // oldest first (pick descending for newest-first).
+    const dir = cfg.sort_dir === "desc" ? -1 : 1;
     rows.sort(([ia, sa], [ib, sb]) => {
       if (sort === "diag") {
         const ba = ["unavailable", "unknown"].includes(sa.state) ? 0 : 1;
@@ -272,9 +275,9 @@ class SbEntityBrowser extends HTMLElement {
         if (ba !== bb) return ba - bb;
         return sb.last_changed.localeCompare(sa.last_changed);
       }
-      if (sort === "state") return sa.state.localeCompare(sb.state, undefined, { numeric: true });
-      if (sort === "last_changed") return sb.last_changed.localeCompare(sa.last_changed);
-      return name(ia, sa).localeCompare(name(ib, sb));
+      if (sort === "state") return dir * sa.state.localeCompare(sb.state, undefined, { numeric: true });
+      if (sort === "last_changed") return dir * sa.last_changed.localeCompare(sb.last_changed);
+      return dir * name(ia, sa).localeCompare(name(ib, sb));
     });
     // The list scrolls beyond list_rows (default 10; 0 = no cap). A hard
     // render cap keeps a broad pattern from flooding the DOM either way.
@@ -542,6 +545,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         labels: "If set, entities must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
         list_rows: "The list scrolls beyond this many rows. Default 10; 0 = no limit.",
+        sort_dir: "For Last changed: ascending = oldest first.",
         tap_action: "Perform-action with an empty target acts on the clicked entity.",
       };
       const labelMap = {
@@ -550,6 +554,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         areas: "Areas",
         secondary: "Secondary info fields",
         sort: "Sort by",
+        sort_dir: "Sort direction",
         list_rows: "Max visible rows",
         tap_action: "Tap action",
         diagnostics_button: "Show diagnostics (F12) button",
@@ -591,6 +596,18 @@ class SbEntityBrowserEditor extends HTMLElement {
                 { value: "name", label: "Name" },
                 { value: "state", label: "State" },
                 { value: "last_changed", label: "Last changed" },
+              ],
+            },
+          },
+        },
+        {
+          name: "sort_dir",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "asc", label: "Ascending" },
+                { value: "desc", label: "Descending" },
               ],
             },
           },
