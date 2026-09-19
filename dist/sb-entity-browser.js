@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.3";
+const VERSION = "0.7.4";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -480,7 +480,11 @@ class SbEntityBrowser extends HTMLElement {
         .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
         .gsel { font-size: .8em; color: var(--secondary-text-color); background: var(--card-background-color, transparent);
                 border: 1px solid var(--divider-color); border-radius: 12px; padding: 2px 6px; cursor: pointer;
-                outline-color: var(--primary-color); }
+                outline-color: var(--primary-color); color-scheme: light dark; }
+        /* Native select popup ignores the page theme — style options or dark
+           themes get light-gray text on a white popup. */
+        .gsel option { background: var(--card-background-color, Canvas);
+                       color: var(--primary-text-color, CanvasText); }
         .searchbox { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 8px 12px; font: inherit;
                      color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12));
                      border: none; border-bottom: 1px solid var(--divider-color); border-radius: 4px 4px 0 0;
