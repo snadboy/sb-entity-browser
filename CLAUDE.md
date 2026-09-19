@@ -108,6 +108,13 @@ release. HACS: update_information → download (users: Update in HACS), then
         sees your change and every browser sees the old release. HACS download refreshes both.
       Also: BusyBox ls in the container shows UTC mtimes — "yesterday 19:32" may be "right now".
       Verified: fresh load 15 subs/11 jinja on-screen of 30 rendered; scroll reconciles 18/18.
+- [x] v0.8.0/v0.9.0 (user's filter card "not working" + two-tier design): EVERY pattern token
+      now matches case-insensitively vs id OR friendly name OR exact state ("CR2450" finds
+      battery_type sensors by state; users type what they SEE). Then TWO FILTER TIERS: card
+      config (patterns/labels/areas) = BASE, always applied, never overridable; URL param +
+      search box = OPTIONAL, narrow-within-base (was: URL REPLACED patterns — a Batteries
+      card could show humidity sensors). Replace-style still expressible via base pattern *.
+      Verified: battery∧FP300=115, ∧CR2450=14, ∧TV=8; dual view filters intact.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
