@@ -10,11 +10,11 @@ persisted per browser.
 ## Features
 
 - **Entity matching** by patterns, **labels**, and **areas** — any mix of
-  domains. A pattern without spaces is a substring glob on the entity id with
-  implied wildcards (`battery` means `*battery*`; explicit `*`/`?` work too).
-  A pattern **with spaces is a word query**, HA target-picker style: every
-  word must match the entity id *or the friendly name*, in any order —
-  `fp300 occupancy` and `occupancy fp300` find the same entities. Within a
+  domains. Every pattern word matches case-insensitively as a substring of
+  the entity id *or the friendly name* (implied wildcards: `battery` means
+  `*battery*`; explicit `*`/`?` work too), or as an **exact match of the
+  current state** — `CR2450` finds the sensors reporting CR2450. Words
+  combine in any order: `fp300 occupancy` ≡ `occupancy fp300`. Within a
   category any entry matches; across categories every configured one must be
   satisfied — so patterns + an area means "these entities, in that area".
   Each pattern field in the editor shows its own live match count.

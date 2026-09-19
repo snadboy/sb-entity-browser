@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.5";
+const VERSION = "0.8.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -23,19 +23,25 @@ const fire = (node, type, detail) =>
 const globToRegex = (glob, flags) =>
   new RegExp(glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."), flags);
 
-// A pattern WITH spaces is a word query (spaces can't occur in entity ids, so
-// there's no ambiguity): every token must match the entity id OR the friendly
-// name, any order, case-insensitive — HA target-picker style. A pattern
-// without spaces stays a glob-substring on the entity id.
+// Every pattern token (space-separated, any order) matches case-insensitively
+// as a substring of the entity id OR the friendly name — HA target-picker
+// style — or as an EXACT match of the current state (so "CR2450" finds the
+// battery-type sensors reporting CR2450). * and ? wildcards work per token.
+// Single tokens use the same rules: users type what they see on screen, and
+// what they see is friendly names and states, not lowercase ids.
 const patternMatcher = (p) => {
   if (!p || !p.trim()) return null;
-  const s = p.trim();
-  if (/\s/.test(s)) {
-    const toks = s.split(/\s+/).map((t) => globToRegex(t, "i"));
-    return (id, name) => toks.every((t) => t.test(id) || (name && t.test(name)));
-  }
-  const r = globToRegex(s);
-  return (id) => r.test(id);
+  const toks = p.trim().split(/\s+/).map((t) => ({
+    re: globToRegex(t, "i"),
+    exact: /[*?]/.test(t) ? null : t.toLowerCase(),
+  }));
+  return (id, name, state) =>
+    toks.every(
+      (t) =>
+        t.re.test(id) ||
+        (name && t.re.test(name)) ||
+        (t.exact != null && state != null && String(state).toLowerCase() === t.exact)
+    );
 };
 
 const entityAreaId = (hass, id) => {
@@ -55,10 +61,11 @@ const matchInfo = (hass, config) => {
   const patCounts = new Array(matchers.length).fill(0);
   const ids = [];
   for (const id of Object.keys(hass.states)) {
-    const name = hass.states[id].attributes.friendly_name;
+    const st = hass.states[id];
+    const name = st.attributes.friendly_name;
     let pOk = active === 0;
     matchers.forEach((m, i) => {
-      if (m && m(id, name)) {
+      if (m && m(id, name, st.state)) {
         patCounts[i]++;
         pOk = true;
       }
@@ -355,7 +362,7 @@ class SbEntityBrowser extends HTMLElement {
 
     const name = (id, st) => st.attributes.friendly_name || id;
     let rows = stateObjs.filter(([id, st]) => {
-      if (searchM && !searchM(id, st.attributes.friendly_name)) return false;
+      if (searchM && !searchM(id, st.attributes.friendly_name, st.state)) return false;
       if (numericMode && isNum(st)) {
         const v = parseFloat(st.state);
         if (thresholds.length) return this._bsel.size === 0 || this._bsel.has(bucketOf(v));
@@ -777,8 +784,10 @@ class SbEntityBrowserEditor extends HTMLElement {
     const m = patternMatcher(p);
     if (!m) return null;
     let n = 0;
-    for (const id of Object.keys(this._hass.states))
-      if (m(id, this._hass.states[id].attributes.friendly_name)) n++;
+    for (const id of Object.keys(this._hass.states)) {
+      const st = this._hass.states[id];
+      if (m(id, st.attributes.friendly_name, st.state)) n++;
+    }
     return n;
   }
 
@@ -788,7 +797,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const n = this._count(input.value);
       count.textContent =
         n == null
-          ? "Glob (“battery” = *battery*) or word query — “fp300 occupancy” matches ids AND friendly names, any order"
+          ? "Matches ids and friendly names (any word order, case-insensitive, * wildcards) — or an entity\u2019s exact state (“CR2450”)"
           : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
     });
   }
