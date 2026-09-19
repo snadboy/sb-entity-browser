@@ -95,6 +95,19 @@ release. HACS: update_information → download (users: Update in HACS), then
 - [x] v0.6.2 show_group_selector: opt-in header dropdown; viewer's grouping choice persists per
       browser (localStorage `gsel`) and OVERRIDES cfg.group_by. Verified live switching
       area/state/floor on the lab Occupancy card.
+- [x] v0.7.0-v0.7.3 hard on-screen limits (user req): list_rows ALWAYS in effect (invalid/0→10,
+      min 3; the "0 = unlimited" escape hatch is gone); template subs scoped to rows ON SCREEN
+      (geometry reconcile on render + scroll (150ms) + 5s sweep; 60-sub ceiling; failed subs
+      just retry next sweep). Two hard-won lifecycle traps:
+      * **HA renders cards DETACHED and re-attaches during layout** — any render-time arm that
+        checks isConnected/geometry silently no-ops, and disconnectedCallback teardown kills
+        timers with nothing restarting them. connectedCallback MUST re-arm (v0.7.3). A one-shot
+        IntersectionObserver initial report is unusable for the same reason (v0.7.2 removed it).
+      * **Manual deploys to /config/www/community MUST also replace the .gz sibling** — HA serves
+        <file>.js.gz to any gzip-accepting client (all browsers); tee-ing only the .js means curl
+        sees your change and every browser sees the old release. HACS download refreshes both.
+      Also: BusyBox ls in the container shows UTC mtimes — "yesterday 19:32" may be "right now".
+      Verified: fresh load 15 subs/11 jinja on-screen of 30 rendered; scroll reconciles 18/18.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
