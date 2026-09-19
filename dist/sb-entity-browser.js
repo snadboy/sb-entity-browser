@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.2";
+const VERSION = "0.7.3";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -188,6 +188,10 @@ class SbEntityBrowser extends HTMLElement {
     window.addEventListener("location-changed", this._onNav);
     window.addEventListener("popstate", this._onNav);
     // Keep "Nm ago" honest — those only change when something re-renders.
+    // HA builds cards DETACHED and re-attaches them during layout — the
+    // render-time template arm bails while disconnected and the sweep dies
+    // in disconnectedCallback, so re-arm on every (re)attach.
+    if (this._config && this._hass) this._setupTplObserver(this._lastScrolls ?? false);
     this._tick = setInterval(() => {
       const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_"));
       if (needs && this._hass && this._config && !this._searchFocus) {
@@ -678,11 +682,13 @@ class SbEntityBrowser extends HTMLElement {
     }
     const listEl = this.shadowRoot.querySelector(".list");
     const reconcile = () => this._reconcileTemplates(scrolls ? listEl : null, tpl);
-    if (scrolls && listEl)
+    if (scrolls && listEl && !listEl._sebScrollBound) {
+      listEl._sebScrollBound = true;
       listEl.addEventListener("scroll", () => {
         clearTimeout(this._scrollT);
         this._scrollT = setTimeout(reconcile, 150);
       });
+    }
     this._tplSweep = setInterval(reconcile, 5000);
     reconcile();
   }
