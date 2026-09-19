@@ -56,7 +56,7 @@ All options are in the visual editor. For reference:
 | `labels` | Entities must also carry one of these labels |
 | `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
-| `secondary_template` | Jinja secondary line, rendered live for VISIBLE rows only; `entity_id` = the row's entity |
+| `secondary_template` | Jinja secondary line, rendered live only for rows **on screen** (IntersectionObserver; subscriptions attach on scroll-in, release on scroll-out, hard cap 60) |
 | `group_by` | `none`, `floor`, `area`, `state`, or `domain` — collapsible section headers with per-card collapse/expand-all buttons |
 | `density` | `comfortable` (two lines) or `compact` (one line) |
 | `state_style` | `text` or `pill` (tinted badge; active states accent-colored, unavailable red) |
@@ -65,7 +65,7 @@ All options are in the visual editor. For reference:
 | `show_group_selector` | Group-by dropdown in the card header; the viewer's choice persists per browser and overrides `group_by` |
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
-| `list_rows` | Max visible rows; the list scrolls beyond this (empty = no cap) |
+| `list_rows` | Hard on-screen limit (3–50, default 10): the list shows this many rows and scrolls for the rest |
 | `tap_action` | Standard HA action |
 | `diagnostics_button` | Show the F12-style toggle |
 | `storage_id` | Key for the per-browser filter persistence (auto-generated) |

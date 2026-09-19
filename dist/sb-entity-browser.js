@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.6.2";
+const VERSION = "0.7.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -201,6 +201,7 @@ class SbEntityBrowser extends HTMLElement {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
     clearInterval(this._tick);
+    this._io?.disconnect();
     this._dropTemplates();
   }
 
@@ -396,12 +397,14 @@ class SbEntityBrowser extends HTMLElement {
       return base(a, b);
     });
 
-    const listRows = parseInt(cfg.list_rows) || 0;
+    // Hard on-screen limit: list_rows is ALWAYS in effect (invalid/0 falls
+    // back to 10) — the list never grows past it, everything else scrolls.
+    const listRows = Math.max(3, parseInt(cfg.list_rows) || 10);
     const renderCap = 500;
     const shown = rows.length;
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
-    const scrolls = listRows && rows.length > listRows;
+    const scrolls = rows.length > listRows;
     const listStyle = scrolls
       ? `max-height:${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em; overflow-y:auto;`
       : "";
@@ -648,14 +651,59 @@ class SbEntityBrowser extends HTMLElement {
         this._onNav?.();
       });
 
-    // Jinja secondary info: subscriptions exist ONLY for rows currently in
-    // the DOM (filtered, capped, not inside a collapsed group) — the whole
-    // point is that a broad pattern costs nothing until rows are visible.
-    clearTimeout(this._tplTimer);
-    this._tplTimer = setTimeout(() => {
-      const vis = [...this.shadowRoot.querySelectorAll(".row")].map((e) => e.dataset.entity);
-      this._syncTemplates(vis);
-    }, 300);
+    // Jinja secondary info: subscriptions exist ONLY for rows actually ON
+    // SCREEN — an IntersectionObserver subscribes rows as they scroll into
+    // view (the scroll container, or the page viewport for the card itself)
+    // and releases them when they leave, under a hard concurrent cap.
+    // Results stay cached, so scrolled-back rows fill instantly.
+    this._setupTplObserver(scrolls);
+  }
+
+  _setupTplObserver(scrolls) {
+    this._io?.disconnect();
+    const tpl = (this._config?.secondary_template || "").trim();
+    if (tpl !== this._tplStr) {
+      this._dropTemplates();
+      this._tplStr = tpl;
+    }
+    if (!tpl || this._effConfig().density === "compact") {
+      if (this._tsubs.size) this._dropTemplates();
+      return;
+    }
+    const listEl = this.shadowRoot.querySelector(".list");
+    this._io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const id = e.target.dataset.entity;
+          if (e.isIntersecting) this._tplSub(id, tpl);
+          else this._tplUnsub(id);
+        }
+      },
+      { root: scrolls ? listEl : null, rootMargin: "80px" }
+    );
+    this.shadowRoot.querySelectorAll(".row").forEach((r) => this._io.observe(r));
+  }
+
+  _tplSub(id, tpl) {
+    if (this._tsubs.has(id)) return;
+    if (this._tsubs.size >= 60) return; // hard ceiling, whatever the layout does
+    const p = this._hass.connection.subscribeMessage(
+      (msg) => {
+        this._tres.set(id, msg.result ?? "");
+        const el = this.shadowRoot.querySelector(`.row[data-entity="${CSS.escape(id)}"] .jinja`);
+        if (el) el.textContent = this._tres.get(id);
+      },
+      { type: "render_template", template: tpl, variables: { entity_id: id } }
+    );
+    p.catch(() => this._tsubs.delete(id));
+    this._tsubs.set(id, p);
+  }
+
+  _tplUnsub(id) {
+    const p = this._tsubs.get(id);
+    if (!p) return;
+    p.then((u) => u()).catch(() => {});
+    this._tsubs.delete(id); // cached result kept for instant refill
   }
 
   _chip(state, count) {
@@ -668,37 +716,6 @@ class SbEntityBrowser extends HTMLElement {
     this._tres.clear();
   }
 
-  _syncTemplates(visibleIds) {
-    const tpl = (this._config?.secondary_template || "").trim();
-    if (tpl !== this._tplStr) {
-      this._dropTemplates();
-      this._tplStr = tpl;
-    }
-    if (!tpl || this._config.density === "compact") {
-      if (this._tsubs.size) this._dropTemplates();
-      return;
-    }
-    const want = new Set(visibleIds);
-    for (const [id, p] of this._tsubs)
-      if (!want.has(id)) {
-        p.then((u) => u()).catch(() => {});
-        this._tsubs.delete(id);
-        this._tres.delete(id);
-      }
-    for (const id of want)
-      if (!this._tsubs.has(id)) {
-        const p = this._hass.connection.subscribeMessage(
-          (msg) => {
-            this._tres.set(id, msg.result ?? "");
-            const el = this.shadowRoot.querySelector(`.row[data-entity="${CSS.escape(id)}"] .jinja`);
-            if (el) el.textContent = this._tres.get(id);
-          },
-          { type: "render_template", template: tpl, variables: { entity_id: id } }
-        );
-        p.catch(() => this._tsubs.delete(id));
-        this._tsubs.set(id, p);
-      }
-  }
 }
 
 class SbEntityBrowserEditor extends HTMLElement {
@@ -827,7 +844,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const helperMap = {
         labels: "If set, entities must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
-        list_rows: "The list scrolls beyond this many rows. Default 10; 0 = no limit.",
+        list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
         sort_dir: "For Last changed: ascending = oldest first.",
         tap_action: "Perform-action with an empty target acts on the clicked entity.",
         secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
@@ -949,7 +966,7 @@ class SbEntityBrowserEditor extends HTMLElement {
             },
           },
         },
-        { name: "list_rows", selector: { number: { min: 0, max: 50, mode: "box" } } },
+        { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
         { name: "tap_action", selector: { ui_action: {} } },
         { name: "diagnostics_button", selector: { boolean: {} } },
       ]);
