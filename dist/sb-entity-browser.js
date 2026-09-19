@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.4";
+const VERSION = "0.7.5";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -548,7 +548,7 @@ class SbEntityBrowser extends HTMLElement {
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · URL key: seb-${esc(cfg.storage_id || "")} · v${VERSION}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
