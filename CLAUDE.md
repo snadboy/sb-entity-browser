@@ -89,6 +89,9 @@ release. HACS: update_information → download (users: Update in HACS), then
       interactions (this._animate flag — constant fade would flicker on live updates).
       Verified headless: groups+pills+search+jinja models on Occupancy, bucket chips + 344
       compact pill rows on Batteries, zero page errors.
+- [x] v0.6.1 grouping: group_by gains floor (area.floor_id → hass.floors) and state; header
+      collapse-all/expand-all fold buttons when grouping active (verified headless: 30 rows →
+      0 → 30; collapsed groups also drop their jinja subs since they leave the DOM).
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
