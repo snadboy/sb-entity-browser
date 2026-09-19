@@ -92,6 +92,9 @@ release. HACS: update_information → download (users: Update in HACS), then
 - [x] v0.6.1 grouping: group_by gains floor (area.floor_id → hass.floors) and state; header
       collapse-all/expand-all fold buttons when grouping active (verified headless: 30 rows →
       0 → 30; collapsed groups also drop their jinja subs since they leave the DOM).
+- [x] v0.6.2 show_group_selector: opt-in header dropdown; viewer's grouping choice persists per
+      browser (localStorage `gsel`) and OVERRIDES cfg.group_by. Verified live switching
+      area/state/floor on the lab Occupancy card.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
