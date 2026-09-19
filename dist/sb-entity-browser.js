@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.1";
+const VERSION = "0.7.2";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -201,8 +201,7 @@ class SbEntityBrowser extends HTMLElement {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
     clearInterval(this._tick);
-    clearTimeout(this._tplRetry);
-    this._io?.disconnect();
+    clearInterval(this._tplSweep);
     this._dropTemplates();
   }
 
@@ -660,49 +659,45 @@ class SbEntityBrowser extends HTMLElement {
     this._setupTplObserver(scrolls);
   }
 
+  // Deterministic template reconciliation: no IntersectionObserver (its
+  // one-shot initial reports race HA's staged card mounting and never
+  // retry). Instead, measure which rows are on screen and reconcile
+  // subscriptions — on every render, on scroll (debounced), and every 5s
+  // as a self-healing sweep. A failed subscribe is simply retried on the
+  // next sweep.
   _setupTplObserver(scrolls) {
-    this._io?.disconnect();
     const tpl = (this._config?.secondary_template || "").trim();
     if (tpl !== this._tplStr) {
       this._dropTemplates();
       this._tplStr = tpl;
     }
+    clearInterval(this._tplSweep);
     if (!tpl || this._effConfig().density === "compact") {
       if (this._tsubs.size) this._dropTemplates();
       return;
     }
     const listEl = this.shadowRoot.querySelector(".list");
-    this._io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          const id = e.target.dataset.entity;
-          if (e.isIntersecting) this._tplSub(id, tpl);
-          else this._tplUnsub(id);
-        }
-      },
-      { root: scrolls ? listEl : null, rootMargin: "80px" }
-    );
-    const rows = [...this.shadowRoot.querySelectorAll(".row")];
-    rows.forEach((r) => this._io.observe(r));
-    // Deterministic initial fill: the observer's first report can race the
-    // dashboard's early hidden/replaced renders, and IO only fires again on
-    // CHANGES — so a missed or rejected first pass would never retry.
-    // Subscribe the currently on-screen rows synchronously; the observer
-    // then handles scroll in/out.
-    const rootRect = scrolls ? listEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-    let any = false;
-    for (const r of rows) {
+    const reconcile = () => this._reconcileTemplates(scrolls ? listEl : null, tpl);
+    if (scrolls && listEl)
+      listEl.addEventListener("scroll", () => {
+        clearTimeout(this._scrollT);
+        this._scrollT = setTimeout(reconcile, 150);
+      });
+    this._tplSweep = setInterval(reconcile, 5000);
+    reconcile();
+  }
+
+  _reconcileTemplates(rootEl, tpl) {
+    if (!this.isConnected) return;
+    const rootRect = rootEl ? rootEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    const want = new Set();
+    for (const r of this.shadowRoot.querySelectorAll(".row")) {
       const b = r.getBoundingClientRect();
-      if (b.height && b.bottom >= rootRect.top - 80 && b.top <= rootRect.bottom + 80) {
-        this._tplSub(r.dataset.entity, tpl);
-        any = true;
-      }
+      if (b.height && b.bottom >= rootRect.top - 80 && b.top <= rootRect.bottom + 80)
+        want.add(r.dataset.entity);
     }
-    // Hidden at render time (zero rects)? Retry a few times until visible.
-    clearTimeout(this._tplRetry);
-    if (!any && rows.length && (this._tplTries = (this._tplTries || 0) + 1) <= 5)
-      this._tplRetry = setTimeout(() => this._setupTplObserver(scrolls), 1200);
-    if (any) this._tplTries = 0;
+    for (const id of this._tsubs.keys()) if (!want.has(id)) this._tplUnsub(id);
+    for (const id of want) this._tplSub(id, tpl);
   }
 
   _tplSub(id, tpl) {
