@@ -115,6 +115,9 @@ release. HACS: update_information → download (users: Update in HACS), then
       search box = OPTIONAL, narrow-within-base (was: URL REPLACED patterns — a Batteries
       card could show humidity sensors). Replace-style still expressible via base pattern *.
       Verified: battery∧FP300=115, ∧CR2450=14, ∧TV=8; dual view filters intact.
+- ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
+  GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
+  in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.
 - Test rig: scratchpad render_test.js (playwright-core + ~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome,
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
