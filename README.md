@@ -62,6 +62,7 @@ All options are in the visual editor. For reference:
 | `state_style` | `text` or `pill` (tinted badge; active states accent-colored, unavailable red) |
 | `buckets` | Comma-separated thresholds for numeric sets (`20, 50` → chips `<20 · 20–50 · >50`) |
 | `show_search` | Word-query search box on the card (ids + friendly names) |
+| `show_group_selector` | Group-by dropdown in the card header; the viewer's choice persists per browser and overrides `group_by` |
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
 | `list_rows` | Max visible rows; the list scrolls beyond this (empty = no cap) |

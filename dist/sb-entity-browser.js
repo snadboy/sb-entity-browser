@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.6.1";
+const VERSION = "0.6.2";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -136,6 +136,7 @@ class SbEntityBrowser extends HTMLElement {
       this._diag = !!saved.diag;
       this._bsel = new Set(saved.bsel || []);
       this._coll = new Set(saved.coll || []);
+      this._gsel = saved.gsel ?? null;
     } catch (e) {
       this._selected = new Set();
       this._bsel = new Set();
@@ -242,7 +243,8 @@ class SbEntityBrowser extends HTMLElement {
       localStorage.setItem(
         this._storeKey,
         JSON.stringify({ states: [...this._selected], min: this._min, max: this._max,
-                         diag: this._diag, bsel: [...this._bsel], coll: [...this._coll] })
+                         diag: this._diag, bsel: [...this._bsel], coll: [...this._coll],
+                         gsel: this._gsel })
       );
     } catch (e) {
       /* private mode etc. — filter just won't persist */
@@ -362,7 +364,9 @@ class SbEntityBrowser extends HTMLElement {
     // Sort: group key first (when grouping), then the chosen order.
     const sort = this._diag ? "diag" : cfg.sort || "name";
     const dir = cfg.sort_dir === "desc" ? -1 : 1;
-    const groupBy = ["floor", "area", "state", "domain"].includes(cfg.group_by) ? cfg.group_by : null;
+    // Viewer's header selection (per browser) overrides the configured default.
+    const groupSel = this._gsel ?? cfg.group_by;
+    const groupBy = ["floor", "area", "state", "domain"].includes(groupSel) ? groupSel : null;
     const groupOf = (id, st) => {
       if (groupBy === "domain") return id.split(".")[0];
       if (groupBy === "state") return st.state;
@@ -467,6 +471,9 @@ class SbEntityBrowser extends HTMLElement {
         .count { color: var(--secondary-text-color); font-size: .85em; }
         .diag-btn, .fold-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
         .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
+        .gsel { font-size: .8em; color: var(--secondary-text-color); background: var(--card-background-color, transparent);
+                border: 1px solid var(--divider-color); border-radius: 12px; padding: 2px 6px; cursor: pointer;
+                outline-color: var(--primary-color); }
         .searchbox { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 8px 12px; font: inherit;
                      color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12));
                      border: none; border-bottom: 1px solid var(--divider-color); border-radius: 4px 4px 0 0;
@@ -511,6 +518,11 @@ class SbEntityBrowser extends HTMLElement {
         <div class="header">
           <div class="title">${esc(cfg.title || "")}</div>
           <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
+          ${cfg.show_group_selector
+            ? `<select class="gsel" title="Group by">${["none", "floor", "area", "state", "domain"]
+                .map((g) => `<option value="${g}" ${g === (groupBy || "none") ? "selected" : ""}>${g === "none" ? "No grouping" : g[0].toUpperCase() + g.slice(1)}</option>`)
+                .join("")}</select>`
+            : ""}
           ${groupBy
             ? `<ha-icon class="fold-btn" data-fold="collapse" icon="mdi:unfold-less-horizontal" title="Collapse all"></ha-icon>
                <ha-icon class="fold-btn" data-fold="expand" icon="mdi:unfold-more-horizontal" title="Expand all"></ha-icon>`
@@ -572,6 +584,12 @@ class SbEntityBrowser extends HTMLElement {
         rerender();
       });
     });
+    const gsel = this.shadowRoot.querySelector(".gsel");
+    if (gsel)
+      gsel.addEventListener("change", () => {
+        this._gsel = gsel.value;
+        rerender();
+      });
     this.shadowRoot.querySelectorAll(".fold-btn").forEach((el) => {
       el.addEventListener("click", () => {
         if (el.dataset.fold === "collapse") groupKeys.forEach((g) => this._coll.add(g));
@@ -815,6 +833,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
         buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 \u2192 chips <20 \u00b7 20\u201350 \u00b7 >50. Empty = min/max inputs.",
         show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
+        show_group_selector: "Lets the viewer switch grouping; their choice sticks per browser and overrides the Group by default.",
       };
       const labelMap = {
         title: "Title",
@@ -829,6 +848,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         density: "Density",
         group_by: "Group by",
         show_search: "Show search box",
+        show_group_selector: "Show group-by selector on card",
         list_rows: "Max visible rows",
         tap_action: "Tap action",
         diagnostics_button: "Show diagnostics (F12) button",
@@ -903,6 +923,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "secondary_template", selector: { text: { multiline: true } } },
         { name: "buckets", selector: { text: {} } },
         { name: "show_search", selector: { boolean: {} } },
+        { name: "show_group_selector", selector: { boolean: {} } },
         {
           name: "sort",
           selector: {
