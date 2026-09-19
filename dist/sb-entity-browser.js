@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -52,7 +52,7 @@ const entityAreaId = (hass, id) => {
 // Matching semantics: within a category any entry matches (OR); across the
 // categories that are configured — patterns ∧ labels ∧ areas — ALL must be
 // satisfied. An empty category doesn't constrain.
-const matchInfo = (hass, config) => {
+const matchInfo = (hass, config, extra) => {
   // Index-aligned with config.patterns (blank entries match nothing).
   const matchers = (config.patterns || []).map(patternMatcher);
   const active = matchers.filter(Boolean).length;
@@ -76,6 +76,7 @@ const matchInfo = (hass, config) => {
       if (!reg?.labels?.some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
+    if (extra && !extra(id, name, st.state)) continue;
     ids.push(id);
   }
   return { ids, patCounts };
@@ -225,13 +226,17 @@ class SbEntityBrowser extends HTMLElement {
     }
   }
 
-  _effConfig() {
-    const u = this._urlPattern();
-    return u ? { ...this._config, patterns: [u] } : this._config;
+  // Two filter tiers: the card's own config (patterns/labels/areas) is the
+  // BASE — the card's identity, always applied. The URL pattern (filter
+  // cards, bookmarks) and the search box are the OPTIONAL tier: they only
+  // narrow within the base. A card configured with pattern * has everything
+  // as its base, which recovers replace-like behavior when wanted.
+  _urlMatcher() {
+    return patternMatcher(this._urlPattern());
   }
 
   _matches() {
-    return matchInfo(this._hass, this._effConfig()).ids;
+    return matchInfo(this._hass, this._config, this._urlMatcher()).ids;
   }
 
   _signature() {
@@ -321,8 +326,8 @@ class SbEntityBrowser extends HTMLElement {
     const h = this._hass;
     const urlPat = this._urlPattern();
     this._lastUrlPat = urlPat;
-    const cfg = this._effConfig();
-    const { ids, patCounts } = matchInfo(h, cfg);
+    const cfg = this._config;
+    const { ids, patCounts } = matchInfo(h, cfg, this._urlMatcher());
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
@@ -687,7 +692,7 @@ class SbEntityBrowser extends HTMLElement {
       this._tplStr = tpl;
     }
     clearInterval(this._tplSweep);
-    if (!tpl || this._effConfig().density === "compact") {
+    if (!tpl || this._config.density === "compact") {
       if (this._tsubs.size) this._dropTemplates();
       return;
     }
