@@ -57,7 +57,7 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `secondary_template` | Jinja secondary line, rendered live for VISIBLE rows only; `entity_id` = the row's entity |
-| `group_by` | `none`, `area`, or `domain` — collapsible section headers |
+| `group_by` | `none`, `floor`, `area`, `state`, or `domain` — collapsible section headers with per-card collapse/expand-all buttons |
 | `density` | `comfortable` (two lines) or `compact` (one line) |
 | `state_style` | `text` or `pill` (tinted badge; active states accent-colored, unavailable red) |
 | `buckets` | Comma-separated thresholds for numeric sets (`20, 50` → chips `<20 · 20–50 · >50`) |

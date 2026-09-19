@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -362,8 +362,17 @@ class SbEntityBrowser extends HTMLElement {
     // Sort: group key first (when grouping), then the chosen order.
     const sort = this._diag ? "diag" : cfg.sort || "name";
     const dir = cfg.sort_dir === "desc" ? -1 : 1;
-    const groupBy = cfg.group_by === "area" || cfg.group_by === "domain" ? cfg.group_by : null;
-    const groupOf = (id) => (groupBy === "domain" ? id.split(".")[0] : this._area(id) || "No area");
+    const groupBy = ["floor", "area", "state", "domain"].includes(cfg.group_by) ? cfg.group_by : null;
+    const groupOf = (id, st) => {
+      if (groupBy === "domain") return id.split(".")[0];
+      if (groupBy === "state") return st.state;
+      if (groupBy === "floor") {
+        const areaId = entityAreaId(h, id);
+        const floorId = h.areas?.[areaId]?.floor_id;
+        return h.floors?.[floorId]?.name || "No floor";
+      }
+      return this._area(id) || "No area";
+    };
     const base = ([ia, sa], [ib, sb]) => {
       if (sort === "diag") {
         const ba = isBad(sa) ? 0 : 1;
@@ -377,7 +386,7 @@ class SbEntityBrowser extends HTMLElement {
     };
     rows.sort((a, b) => {
       if (groupBy) {
-        const g = groupOf(a[0]).localeCompare(groupOf(b[0]));
+        const g = groupOf(a[0], a[1]).localeCompare(groupOf(b[0], b[1]));
         if (g) return g;
       }
       return base(a, b);
@@ -430,12 +439,14 @@ class SbEntityBrowser extends HTMLElement {
     };
 
     let rowsHtml = "";
+    const groupKeys = [];
     if (groupBy) {
       let i = 0;
       while (i < rows.length) {
-        const g = groupOf(rows[i][0]);
+        const g = groupOf(rows[i][0], rows[i][1]);
+        groupKeys.push(g);
         let j = i;
-        while (j < rows.length && groupOf(rows[j][0]) === g) j++;
+        while (j < rows.length && groupOf(rows[j][0], rows[j][1]) === g) j++;
         const coll = this._coll.has(g);
         rowsHtml += `<div class="grp" data-g="${esc(g)}"><ha-icon icon="mdi:chevron-${coll ? "right" : "down"}"></ha-icon>${esc(g)}<span class="n">${j - i}</span></div>`;
         if (!coll) rowsHtml += rows.slice(i, j).map(rowHtml).join("");
@@ -454,7 +465,7 @@ class SbEntityBrowser extends HTMLElement {
         .header { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 1.2em; font-weight: 500; flex: 1; color: var(--primary-text-color); }
         .count { color: var(--secondary-text-color); font-size: .85em; }
-        .diag-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
+        .diag-btn, .fold-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
         .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
         .searchbox { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 8px 12px; font: inherit;
                      color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12));
@@ -500,6 +511,10 @@ class SbEntityBrowser extends HTMLElement {
         <div class="header">
           <div class="title">${esc(cfg.title || "")}</div>
           <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
+          ${groupBy
+            ? `<ha-icon class="fold-btn" data-fold="collapse" icon="mdi:unfold-less-horizontal" title="Collapse all"></ha-icon>
+               <ha-icon class="fold-btn" data-fold="expand" icon="mdi:unfold-more-horizontal" title="Expand all"></ha-icon>`
+            : ""}
           ${cfg.diagnostics_button
             ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
             : ""}
@@ -554,6 +569,13 @@ class SbEntityBrowser extends HTMLElement {
       el.addEventListener("click", () => {
         const g = el.dataset.g;
         this._coll.has(g) ? this._coll.delete(g) : this._coll.add(g);
+        rerender();
+      });
+    });
+    this.shadowRoot.querySelectorAll(".fold-btn").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (el.dataset.fold === "collapse") groupKeys.forEach((g) => this._coll.add(g));
+        else this._coll.clear();
         rerender();
       });
     });
@@ -846,7 +868,9 @@ class SbEntityBrowserEditor extends HTMLElement {
               mode: "dropdown",
               options: [
                 { value: "none", label: "No grouping" },
+                { value: "floor", label: "Floor" },
                 { value: "area", label: "Area" },
+                { value: "state", label: "State" },
                 { value: "domain", label: "Domain" },
               ],
             },
