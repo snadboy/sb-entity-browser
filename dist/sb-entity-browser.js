@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -201,6 +201,7 @@ class SbEntityBrowser extends HTMLElement {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
     clearInterval(this._tick);
+    clearTimeout(this._tplRetry);
     this._io?.disconnect();
     this._dropTemplates();
   }
@@ -681,7 +682,27 @@ class SbEntityBrowser extends HTMLElement {
       },
       { root: scrolls ? listEl : null, rootMargin: "80px" }
     );
-    this.shadowRoot.querySelectorAll(".row").forEach((r) => this._io.observe(r));
+    const rows = [...this.shadowRoot.querySelectorAll(".row")];
+    rows.forEach((r) => this._io.observe(r));
+    // Deterministic initial fill: the observer's first report can race the
+    // dashboard's early hidden/replaced renders, and IO only fires again on
+    // CHANGES — so a missed or rejected first pass would never retry.
+    // Subscribe the currently on-screen rows synchronously; the observer
+    // then handles scroll in/out.
+    const rootRect = scrolls ? listEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    let any = false;
+    for (const r of rows) {
+      const b = r.getBoundingClientRect();
+      if (b.height && b.bottom >= rootRect.top - 80 && b.top <= rootRect.bottom + 80) {
+        this._tplSub(r.dataset.entity, tpl);
+        any = true;
+      }
+    }
+    // Hidden at render time (zero rects)? Retry a few times until visible.
+    clearTimeout(this._tplRetry);
+    if (!any && rows.length && (this._tplTries = (this._tplTries || 0) + 1) <= 5)
+      this._tplRetry = setTimeout(() => this._setupTplObserver(scrolls), 1200);
+    if (any) this._tplTries = 0;
   }
 
   _tplSub(id, tpl) {
