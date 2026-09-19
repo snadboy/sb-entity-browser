@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -420,10 +420,12 @@ class SbEntityBrowser extends HTMLElement {
     const shown = rows.length;
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
+    // Absolute ceiling on top of the row cap: the list never exceeds 70% of
+    // the viewport, whatever list_rows and row heights add up to.
     const scrolls = rows.length > listRows;
     const listStyle = scrolls
-      ? `max-height:${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em; overflow-y:auto;`
-      : "";
+      ? `max-height:min(${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em, 70vh); overflow-y:auto;`
+      : `max-height:70vh; overflow-y:auto;`;
 
     const compact = cfg.density === "compact";
     const pill = cfg.state_style === "pill";
@@ -658,7 +660,8 @@ class SbEntityBrowser extends HTMLElement {
       const listEl = this.shadowRoot.querySelector(".list");
       requestAnimationFrame(() => {
         const r0 = listEl?.querySelector(".row");
-        if (r0?.offsetHeight) listEl.style.maxHeight = r0.offsetHeight * listRows + "px";
+        if (r0?.offsetHeight)
+          listEl.style.maxHeight = `min(${r0.offsetHeight * listRows}px, 70vh)`;
       });
     }
     const clear = this.shadowRoot.querySelector(".url-clear");
