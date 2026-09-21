@@ -162,6 +162,22 @@ release. HACS: update_information → download (users: Update in HACS), then
       fallback `entityAreaId` already does for areas. Helper text says so. Lesson: a label you
       applied "to the plug" in the device page is a device label; users expect its entities to
       count, and the registry shape doesn't tell them otherwise.
+- [x] v0.11.0 states display as HA displays them (user: "FP300 Occupancy shows on/off, HA shows
+      Occupancy/Detected"). Rows use `hass.formatEntityState(st)` — device class, language,
+      numeric+unit in one call, same as built-in cards — via `fmtState`, a Map cache keyed
+      entity|state|device_class|unit, CAPPED at 5000 (numeric sensors mint a key per reading)
+      because matchInfo now runs it for the whole estate on every hass tick. The manual
+      `state + unit` render is gone (formatEntityState includes the unit; "0%" no space is
+      HA's own formatting). Chips are GROUPED BY THE DISPLAYED STATE — a first cut kept raw
+      keys with a "label only when the whole group agrees" rule, and the user's own Occupancy
+      card (FP300 sensors + occupancy lights, both raw on/off) fell straight into the mixed
+      case and still read `on 14 · off 15`. Now it reads `Clear · On · Detected · Off`, and the
+      Detected chip selects the sensors that read Detected, not every raw `on`. `_selected`
+      holds display strings; the row filter accepts raw OR formatted so a selection persisted
+      before v0.11.0 does not blank the list, and the next click rewrites it. State cell keeps
+      the raw state in `title`; diag line shows `raw <state>`. Patterns and
+      the search box exact-match the FORMATTED state too ("detected" → the 2 detecting
+      sensors) — "type what you see" now literally. Perf probe unchanged within noise.
 - ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
   GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
   in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.

@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.10.3";
+const VERSION = "0.11.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -39,12 +39,15 @@ const patternMatcher = (p) => {
     re: globToRegex(t, "i"),
     exact: /[*?]/.test(t) ? null : t.toLowerCase(),
   }));
-  return (id, name, state) =>
+  // `fmt` is the displayed state ("Detected"): typing what you see must work
+  // whether what you see is the raw state or HA's formatted one.
+  return (id, name, state, fmt) =>
     toks.every(
       (t) =>
         t.re.test(id) ||
         (name && t.re.test(name)) ||
-        (t.exact != null && state != null && String(state).toLowerCase() === t.exact)
+        (t.exact != null && state != null && String(state).toLowerCase() === t.exact) ||
+        (t.exact != null && fmt != null && String(fmt).toLowerCase() === t.exact)
     );
 };
 
@@ -69,9 +72,10 @@ const matchInfo = (hass, config, extra) => {
   for (const id of Object.keys(hass.states)) {
     const st = hass.states[id];
     const name = st.attributes.friendly_name;
+    const fmt = active || extra ? fmtState(hass, st) : null;
     let pOk = active === 0;
     matchers.forEach((m, i) => {
-      if (m && m(id, name, st.state)) {
+      if (m && m(id, name, st.state, fmt)) {
         patCounts[i]++;
         pOk = true;
       }
@@ -88,7 +92,7 @@ const matchInfo = (hass, config, extra) => {
       if (!own.some((l) => labels.includes(l)) && !dev.some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
-    if (extra && !extra(id, name, st.state)) continue;
+    if (extra && !extra(id, name, st.state, fmt)) continue;
     ids.push(id);
   }
   return { ids, patCounts };
@@ -104,6 +108,26 @@ const relTime = (iso) => {
 
 const esc = (v) =>
   String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// The state as HA itself displays it: hass.formatEntityState() applies the
+// device class ("on" → "Detected" for occupancy, "Open" for a door), the
+// user's language, and numeric formatting with the unit — the same call every
+// built-in card makes. Cached per entity+state because matchInfo runs it for
+// the whole estate on every hass tick; capped because numeric sensors mint a
+// new key on every reading.
+const fmtCache = new Map();
+const fmtState = (hass, st) => {
+  const a = st.attributes || {};
+  const k = `${st.entity_id}|${st.state}|${a.device_class || ""}|${a.unit_of_measurement || ""}`;
+  let v = fmtCache.get(k);
+  if (v === undefined) {
+    try { v = hass.formatEntityState ? hass.formatEntityState(st) : st.state; }
+    catch (e) { v = st.state; }
+    if (fmtCache.size > 5000) fmtCache.clear();
+    fmtCache.set(k, v);
+  }
+  return v;
+};
 
 class SbEntityBrowser extends HTMLElement {
   constructor() {
@@ -386,9 +410,19 @@ class SbEntityBrowser extends HTMLElement {
     if (thresholds.length)
       for (const [, st] of numericStates) bucketCounts[bucketOf(parseFloat(st.state))]++;
 
+    // Chips are grouped by the state AS DISPLAYED, not the raw string: an
+    // occupancy card reads "Clear 12 · On 3 · Detected 2", and the Detected
+    // chip selects exactly the sensors that read Detected — not every raw
+    // "on" in sight (the occupancy lights are "On", a separate chip). A
+    // selection saved before this change holds raw values; the row filter
+    // below accepts either, so nothing goes blank, and the next click
+    // rewrites the selection in display terms.
     const counts = new Map();
     for (const [, st] of stateObjs)
-      if (!numericMode || !isNum(st)) counts.set(st.state, (counts.get(st.state) || 0) + 1);
+      if (!numericMode || !isNum(st)) {
+        const f = fmtState(h, st);
+        counts.set(f, (counts.get(f) || 0) + 1);
+      }
 
     // Card search refines WITHIN the matched set. Appending a "match-all"
     // token forces word-query semantics (id AND friendly name) even for a
@@ -399,7 +433,7 @@ class SbEntityBrowser extends HTMLElement {
 
     const name = (id, st) => st.attributes.friendly_name || id;
     let rows = stateObjs.filter(([id, st]) => {
-      if (searchM && !searchM(id, st.attributes.friendly_name, st.state)) return false;
+      if (searchM && !searchM(id, st.attributes.friendly_name, st.state, fmtState(h, st))) return false;
       if (numericMode && isNum(st)) {
         const v = parseFloat(st.state);
         if (thresholds.length) return this._bsel.size === 0 || this._bsel.has(bucketOf(v));
@@ -407,7 +441,7 @@ class SbEntityBrowser extends HTMLElement {
         if (this._max !== "" && v > parseFloat(this._max)) return false;
         return true;
       }
-      return this._selected.size === 0 || this._selected.has(st.state);
+      return this._selected.size === 0 || this._selected.has(fmtState(h, st)) || this._selected.has(st.state);
     });
 
     // Sort: group key first (when grouping), then the chosen order.
@@ -489,9 +523,9 @@ class SbEntityBrowser extends HTMLElement {
             <div class="name">${esc(name(id, st))}</div>
             ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
             ${tpl && !compact ? `<div class="jinja">${esc(this._tres.get(id) ?? "")}</div>` : ""}
-            ${this._diag ? `<div class="diag-line">${esc(id)} · updated ${esc(relTime(st.last_updated))}</div>` : ""}
+            ${this._diag ? `<div class="diag-line">${esc(id)} · raw ${esc(st.state)} · updated ${esc(relTime(st.last_updated))}</div>` : ""}
           </div>
-          <div class="state ${pill ? "pill" : ""}">${esc(st.state)}${st.attributes.unit_of_measurement ? " " + esc(st.attributes.unit_of_measurement) : ""}</div>
+          <div class="state ${pill ? "pill" : ""}" title="${esc(st.state)}">${esc(fmtState(h, st))}</div>
         </div>`;
     };
 
@@ -881,7 +915,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     let n = 0;
     for (const id of Object.keys(this._hass.states)) {
       const st = this._hass.states[id];
-      if (m(id, st.attributes.friendly_name, st.state)) n++;
+      if (m(id, st.attributes.friendly_name, st.state, fmtState(this._hass, st))) n++;
     }
     return n;
   }
