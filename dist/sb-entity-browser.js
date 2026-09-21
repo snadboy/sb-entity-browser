@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.9.1";
+const VERSION = "0.10.0";
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -199,7 +199,10 @@ class SbEntityBrowser extends HTMLElement {
     // HA builds cards DETACHED and re-attaches them during layout — the
     // render-time template arm bails while disconnected and the sweep dies
     // in disconnectedCallback, so re-arm on every (re)attach.
-    if (this._config && this._hass) this._setupTplObserver(this._lastScrolls ?? false);
+    if (this._config && this._hass) {
+      this._setupTplObserver(this._lastScrolls ?? false);
+      this._setupIconReconcile(this._lastScrolls ?? false);
+    }
     this._tick = setInterval(() => {
       const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_"));
       if (needs && this._hass && this._config && !this._searchFocus) {
@@ -214,6 +217,8 @@ class SbEntityBrowser extends HTMLElement {
     window.removeEventListener("popstate", this._onNav);
     clearInterval(this._tick);
     clearInterval(this._tplSweep);
+    clearInterval(this._iconSweep);
+    clearTimeout(this._iconScrollT);
     this._dropTemplates();
   }
 
@@ -452,7 +457,7 @@ class SbEntityBrowser extends HTMLElement {
       const sec = compact ? "" : this._secondaryText(id, st);
       return `
         <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
-          <ha-state-icon class="icon"></ha-state-icon>
+          <span class="icon ph"></span>
           <div class="body">
             <div class="name">${esc(name(id, st))}</div>
             ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
@@ -525,6 +530,10 @@ class SbEntityBrowser extends HTMLElement {
         .row.bad .state { color: var(--error-color); }
         .row.act .state { color: var(--primary-color); }
         .icon { color: var(--state-icon-color, var(--paper-item-icon-color)); flex: none; }
+        /* placeholder for a row not yet on screen: same 24px footprint as
+           ha-state-icon so nothing shifts when the real icon arrives */
+        .icon.ph { display: inline-block; width: 24px; height: 24px; border-radius: 50%;
+                   background: var(--divider-color); opacity: .35; }
         .body { flex: 1; min-width: 0; }
         .name { color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sec, .jinja, .diag-line { color: var(--secondary-text-color); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -578,13 +587,14 @@ class SbEntityBrowser extends HTMLElement {
       this._persist();
       this._render();
     };
+    // Icons are NOT created here. Measured (v0.10.0): a broad pattern's 500
+    // rows rendered in 44 ms, then spent ~1.2 s in long tasks upgrading 500
+    // ha-state-icon elements — and with a churning estate the card
+    // re-renders once a second, so the main thread never freed and the
+    // editor's next setConfig queued behind it. Icons are created only for
+    // rows on screen, by _reconcileIcons below.
     this.shadowRoot.querySelectorAll(".row").forEach((el) => {
       const id = el.dataset.entity;
-      const icon = el.querySelector("ha-state-icon");
-      if (icon) {
-        icon.hass = h;
-        icon.stateObj = h.states[id];
-      }
       el.addEventListener("click", () => this._handleTap(id));
       el.addEventListener("keydown", (e) => e.key === "Enter" && this._handleTap(id));
     });
@@ -680,6 +690,47 @@ class SbEntityBrowser extends HTMLElement {
     // and releases them when they leave, under a hard concurrent cap.
     // Results stay cached, so scrolled-back rows fill instantly.
     this._setupTplObserver(scrolls);
+    this._setupIconReconcile(scrolls);
+  }
+
+  // Same on-screen discipline for icons as for templates: a row gets a real
+  // ha-state-icon only once it is within the list's viewport (±80 px). Runs
+  // after every render, on scroll, on (re)attach — HA builds cards detached,
+  // so render-time geometry is all zeros — and on a 5 s self-healing sweep.
+  _setupIconReconcile(scrolls) {
+    this._lastScrolls = scrolls;
+    clearInterval(this._iconSweep);
+    const listEl = this.shadowRoot.querySelector(".list");
+    const reconcile = () => this._reconcileIcons(scrolls ? listEl : null);
+    if (scrolls && listEl && !listEl._sebIconScrollBound) {
+      listEl._sebIconScrollBound = true;
+      listEl.addEventListener("scroll", () => {
+        clearTimeout(this._iconScrollT);
+        this._iconScrollT = setTimeout(reconcile, 150);
+      });
+    }
+    this._iconSweep = setInterval(reconcile, 5000);
+    reconcile();
+    requestAnimationFrame(reconcile);   // once layout has happened
+  }
+
+  _reconcileIcons(rootEl) {
+    if (!this.isConnected || !this._hass) return;
+    const h = this._hass;
+    const rootRect = rootEl ? rootEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    for (const r of this.shadowRoot.querySelectorAll(".row")) {
+      const ph = r.querySelector(".icon.ph");
+      if (!ph) continue;
+      const b = r.getBoundingClientRect();
+      if (!b.height || b.bottom < rootRect.top - 80 || b.top > rootRect.bottom + 80) continue;
+      const st = h.states[r.dataset.entity];
+      if (!st) continue;
+      const icon = document.createElement("ha-state-icon");
+      icon.className = "icon";
+      icon.hass = h;
+      icon.stateObj = st;
+      ph.replaceWith(icon);
+    }
   }
 
   // Deterministic template reconciliation: no IntersectionObserver (its

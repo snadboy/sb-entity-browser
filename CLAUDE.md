@@ -115,6 +115,20 @@ release. HACS: update_information → download (users: Update in HACS), then
       search box = OPTIONAL, narrow-within-base (was: URL REPLACED patterns — a Batteries
       card could show humidity sensors). Replace-style still expressible via base pattern *.
       Verified: battery∧FP300=115, ∧CR2450=14, ∧TV=8; dual view filters intact.
+- [x] v0.10.0 PERF (user: editor preview "took a very long time" after typing a pattern):
+      the FIRST keystroke is the killer — "o" matches 3,792 of 3,991 entities (sensor./
+      binary_sensor./on/off all contain it) → 500 rows. MEASURED on the live page: the sync
+      render was only 44 ms, but ~1.2 s of long tasks followed, one per ~2.3 ms per row —
+      500 `ha-state-icon` elements upgrading. And it compounds: with a broad pattern active the
+      estate's churn changes the signature every tick, the card re-renders 1/s, each render
+      costs >1 s, so the main thread never frees and the editor's next setConfig queues behind
+      it (the v0.3.2 "frozen Save" mechanism through a different door — gate+throttle is not
+      enough when ONE render exceeds the throttle interval). Fix: rows render a 24 px
+      placeholder; `_reconcileIcons` creates `ha-state-icon` only for rows within the list's
+      viewport ±80 px (the templates' geometry rule), after render, on scroll (150 ms), on
+      re-attach, and on a 5 s sweep. Same probe after: "o" 227 ms long tasks (from 1,160),
+      "oc" 0 (from 405), 11 icons instead of 500. Probe: scratchpad seb_perf.js — setConfig
+      per intermediate pattern + PerformanceObserver longtask; measure, don't guess.
 - ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
   GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
   in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.
