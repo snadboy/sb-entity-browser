@@ -4,7 +4,11 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
+// How long typing must pause before a costly search runs — the editor's
+// config-changed emit, its per-pattern counts, the card's own search box, and
+// the card's re-render on a repeated setConfig all wait this long.
+const TYPING_QUIET_MS = 400;
 
 const SECONDARY_OPTIONS = [
   { value: "state", label: "State" },
@@ -152,12 +156,23 @@ class SbEntityBrowser extends HTMLElement {
       this._min = this._max = "";
     }
     this._sig = "";
-    if (this._hass) this._render();
+    if (!this._hass) return;
+    // First config renders at once. A REPEATED setConfig is the editor
+    // typing: coalesce, so only the pattern that survives the pause is built
+    // (the validation above stays synchronous — HA relies on the throw).
+    if (!this._lastRender) { this._render(); return; }
+    clearTimeout(this._cfgTimer);
+    this._cfgTimer = setTimeout(() => {
+      this._cfgTimer = null;
+      this._sig = "";
+      this._render();
+    }, TYPING_QUIET_MS);
   }
 
   set hass(hass) {
     this._hass = hass;
     if (this._searchFocus) return; // don't yank the list mid-typing in the card search
+    if (this._cfgTimer) return;    // a coalesced config render is pending; a hass tick must not front-run it
     // hass updates arrive on EVERY state change in the system. Render only
     // when something we display changed, and coalesce bursts to one render
     // per second — a broad pattern otherwise rebuilds hundreds of rows on
@@ -659,7 +674,7 @@ class SbEntityBrowser extends HTMLElement {
           this._search = sb.value;
           this._animate = true;
           this._render();
-        }, 250);
+        }, TYPING_QUIET_MS);
       });
       if (this._searchFocus) {
         sb.focus();
@@ -831,11 +846,20 @@ class SbEntityBrowserEditor extends HTMLElement {
   }
 
   // Debounced: emitting per keystroke makes the dialog re-render the preview
-  // card on every character, which is what made typing sluggish.
+  // card on every character, which is what made typing sluggish. 400 ms sits
+  // above a normal typing rhythm (150–350 ms between keys), so intermediate
+  // patterns like "o" — which matches most of the estate — are never built.
   _emit() {
     clearTimeout(this._emitTimer);
     this._emitTimer = setTimeout(
-      () => fire(this, "config-changed", { config: this._config }), 250);
+      () => fire(this, "config-changed", { config: this._config }), TYPING_QUIET_MS);
+  }
+
+  // The live "Matches N entities" line is a full-estate scan per pattern row;
+  // per keystroke that is a costly search too, so it waits for the same quiet.
+  _scheduleCounts() {
+    clearTimeout(this._countsTimer);
+    this._countsTimer = setTimeout(() => this._refreshCounts(), TYPING_QUIET_MS);
   }
 
   _count(p) {
@@ -898,7 +922,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         const arr = [...(this._config.patterns || [])];
         arr[i] = input.value;
         this._config = { ...this._config, patterns: arr };
-        this._refreshCounts();
+        this._scheduleCounts();
         this._emit();
       });
       const del = document.createElement("ha-icon");
@@ -976,6 +1000,12 @@ class SbEntityBrowserEditor extends HTMLElement {
         return f;
       };
       this._formTop = mkForm([{ name: "title", selector: { text: {} } }]);
+      // hass BEFORE appending, so the form's first render already has it.
+      // (This did NOT fix the `localize` TypeError seen when the editor is
+      // instantiated bare on a dashboard page: that throw is inside HA's
+      // lazily-loaded ha-selector-label chunk, which ha-form pulls in while
+      // rendering. Unconfirmed in the real edit dialog — see CLAUDE.md.)
+      this._formTop.hass = this._hass;
       this.appendChild(this._formTop);
 
       const patLabel = document.createElement("div");
@@ -1064,6 +1094,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "tap_action", selector: { ui_action: {} } },
         { name: "diagnostics_button", selector: { boolean: {} } },
       ]);
+      this._formRest.hass = this._hass;   // same ordering as _formTop
       this.appendChild(this._formRest);
     }
     this._formTop.hass = this._hass;

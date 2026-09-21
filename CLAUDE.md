@@ -129,6 +129,27 @@ release. HACS: update_information → download (users: Update in HACS), then
       re-attach, and on a 5 s sweep. Same probe after: "o" 227 ms long tasks (from 1,160),
       "oc" 0 (from 405), 11 icons instead of 500. Probe: scratchpad seb_perf.js — setConfig
       per intermediate pattern + PerformanceObserver longtask; measure, don't guess.
+- [x] v0.10.1 (user's suggestion: "delay the new lookup 250–500 ms; if no new key arrives do the
+      costly search"): ONE constant `TYPING_QUIET_MS = 400` (above a 150–350 ms typing rhythm)
+      now gates every costly path — the editor's config-changed emit (was 250), the editor's
+      per-pattern "Matches N" counts (were IMMEDIATE per keystroke: a full-estate scan per
+      pattern row), the card's on-card search box (was 250), and NEW: the card coalesces a
+      REPEATED `setConfig` (first config still renders at once; validation stays synchronous
+      because HA relies on the throw) with `set hass` held off while the coalesce is pending —
+      otherwise a state tick would render the half-typed pattern anyway. Measured headless:
+      typing "occupancy" at 120 ms/key → 0 emits + 0 count refreshes while typing, 1 each after
+      the pause; a 9-step setConfig burst → 0 renders during, 1 after, 0 long tasks.
+      Harness: scratchpad seb_debounce.js (real editor instance + burst on the lab card).
+      ⚠️ OPEN, pre-existing, cosmetic: that harness logs ONE `TypeError: Cannot read
+      properties of undefined (reading 'localize')` at editor creation, stack entirely inside
+      HA's bundles (`ha-form` formUpdate → a lazily-loaded selector chunk). Two hypotheses were
+      MEASURED false: (1) forms appended before `hass` was set — fixed the ordering anyway, error
+      unchanged; (2) `ha-form` undefined at creation → pre-upgrade property shadowing — no,
+      ha-form is defined, upgraded, `hass` is a real accessor. What IS undefined at creation is
+      `ha-selector-label`, which ha-form lazy-loads while rendering. NOT reproduced in HA's real
+      edit dialog (not attempted headless); nothing in v0.10.x touches form creation. Stopped
+      digging per the rabbit-hole rule; if it matters, drive the REAL dialog headless and watch
+      the console.
 - ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
   GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
   in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.
