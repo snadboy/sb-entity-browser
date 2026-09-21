@@ -150,6 +150,14 @@ release. HACS: update_information → download (users: Update in HACS), then
       edit dialog (not attempted headless); nothing in v0.10.x touches form creation. Stopped
       digging per the rabbit-hole rule; if it matters, drive the REAL dialog headless and watch
       the console.
+- [x] v0.10.2 labels match through the DEVICE too. User removed every pattern and picked the
+      label "Matter Hub" → "No entities match". Measured: the card was correct by HA's rules
+      (no patterns = unconstrained, fine) — the label sat on 7 DEVICES and 0 entities, and HA
+      does not propagate device labels to entities, while the card checked `hass.entities[id]
+      .labels` only. Now an entity matches if it OR its device carries the label — the same
+      fallback `entityAreaId` already does for areas. Helper text says so. Lesson: a label you
+      applied "to the plug" in the device page is a device label; users expect its entities to
+      count, and the registry shape doesn't tell them otherwise.
 - ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
   GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
   in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.

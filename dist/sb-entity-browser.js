@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.10.1";
+const VERSION = "0.10.2";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -76,8 +76,14 @@ const matchInfo = (hass, config, extra) => {
     });
     if (!pOk) continue;
     if (labels.length) {
+      // An entity matches a label it carries itself OR one its DEVICE
+      // carries. HA does not propagate device labels to entities, and the
+      // registry lets you label a device in one click — so "Matter Hub" on
+      // seven plugs matched zero entities and the card looked broken.
       const reg = hass.entities?.[id];
-      if (!reg?.labels?.some((l) => labels.includes(l))) continue;
+      const own = reg?.labels || [];
+      const dev = reg?.device_id ? hass.devices?.[reg.device_id]?.labels || [] : [];
+      if (!own.some((l) => labels.includes(l)) && !dev.some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
     if (extra && !extra(id, name, st.state)) continue;
@@ -960,7 +966,7 @@ class SbEntityBrowserEditor extends HTMLElement {
   _render() {
     if (!this._formTop) {
       const helperMap = {
-        labels: "If set, entities must ALSO carry one of these labels.",
+        labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
         list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
         sort_dir: "For Last changed: ascending = oldest first.",
