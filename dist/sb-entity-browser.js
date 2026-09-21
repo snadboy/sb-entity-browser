@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.10.2";
+const VERSION = "0.10.3";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -57,7 +57,9 @@ const entityAreaId = (hass, id) => {
 // categories that are configured — patterns ∧ labels ∧ areas — ALL must be
 // satisfied. An empty category doesn't constrain.
 const matchInfo = (hass, config, extra) => {
-  // Index-aligned with config.patterns (blank entries match nothing).
+  // Index-aligned with config.patterns. A blank entry is IGNORED (it never
+  // excludes anything); with no active pattern at all, patterns don't
+  // constrain and labels/areas decide alone.
   const matchers = (config.patterns || []).map(patternMatcher);
   const active = matchers.filter(Boolean).length;
   const labels = config.labels || [];
@@ -132,9 +134,13 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   setConfig(config) {
+    // A blank pattern row is neutral in matching (it never excludes anything),
+    // so it must not count as "configured" here either — a lone blank row
+    // with no label or area would otherwise render the whole estate.
+    const realPatterns = (config?.patterns || []).filter((p) => p && p.trim());
     if (
       !config ||
-      (!(config.patterns || []).length && !(config.labels || []).length && !(config.areas || []).length)
+      (!realPatterns.length && !(config.labels || []).length && !(config.areas || []).length)
     ) {
       throw new Error("Configure at least one entity pattern, label, or area");
     }

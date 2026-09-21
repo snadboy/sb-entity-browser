@@ -43,8 +43,12 @@ release. HACS: update_information → download (users: Update in HACS), then
       range inputs gate numeric rows, chips gate text rows side by side. Verified headless on
       the Card Lab view (dashboard-monitor/card-lab, 2 test cards: switch.* chips mode,
       sensor.*_battery* mixed mode); zero console errors from the card.
-- [x] v0.2.0: implied leading/trailing wildcards ("battery" = *battery*; blank patterns match
-      nothing); live per-pattern match counts in the editor + diag note; matching = OR within a
+- [x] v0.2.0: implied leading/trailing wildcards ("battery" = *battery*; ~~blank patterns match
+      nothing~~ — STALE: since the `active === 0` logic a blank row is IGNORED, measured
+      2026-09-21: `["", "occupancy"]` = `["occupancy"]` = 32, `[""]`+label = label alone; a
+      lone blank row with nothing else used to pass validation and render all 4,000 — v0.10.3
+      makes validation ignore blank rows so that case gets the "configure at least one" error
+      instead); live per-pattern match counts in the editor + diag note; matching = OR within a
       category, AND across configured categories (patterns ∧ labels ∧ areas — areas new);
       perform-action with an empty/blank target acts on the clicked row's entity. Lab Batteries
       card now uses bare "battery" pattern (verified headless: minmax=2, chips=10).
