@@ -178,6 +178,25 @@ release. HACS: update_information → download (users: Update in HACS), then
       the raw state in `title`; diag line shows `raw <state>`. Patterns and
       the search box exact-match the FORMATTED state too ("detected" → the 2 detecting
       sensors) — "type what you see" now literally. Perf probe unchanged within noise.
+- [x] **v0.11.1 an unselected filter group says so, and a stale one can be cleared.** The user
+      hit a Matter Thread Hubs card reading `0 / 6` with a single unselected `On 6` chip and
+      no way out, and reasoned it was the "none selected = all" rule failing when only one
+      chip exists. **Reproduced against the real class with a fake hass** (scratchpad
+      `seb_repro.js`): that rule is fine — `_selected` was `["Off"]` from localStorage, no hub
+      is Off any more, and chips are built only from states PRESENT in the matched set, so the
+      Off chip never rendered. An invisible, unclearable filter. Three fixes:
+      (1) **`All` chip per group** (states, buckets) — active when that group has no selection,
+      clears only its own group. Makes "this group is not filtering" visible, which is what was
+      missing, and removes the lone-chip ambiguity (`All* · On 6` instead of a bare `On 6` that
+      looks like a no-op because selecting it changes nothing).
+      (2) **A selected state with count 0 still gets a chip**, greyed + dashed, so the stale
+      filter is visible and clickable; intent is preserved (when a hub does go Off it returns).
+      (3) **The empty state is an escape hatch** — `Clear filters` appears whenever `filtered`
+      and zero rows, because search and min/max can empty the list with no chip to show for it.
+      NOT changed, by decision: cross-group semantics. A bucket selection still leaves
+      non-numerics unconstrained (measured: buckets `20,50` + `<20` → 7 rows = 3 temps AND all
+      4 doors). The `All` chips at least make that legible; a stricter "hide what the group
+      does not apply to" rule would be a config option, not a silent change.
 - ⚠️ The scratchpad add_view.py REPLACES the card-lab view wholesale — it clobbered a
   GUI-added card once (2026-09-19, restored from a prior dump). The USER now edits Card Lab
   in the GUI: never regenerate the view; dump lovelace/config, modify surgically, save.

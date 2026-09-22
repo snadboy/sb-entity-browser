@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.11.0";
+const VERSION = "0.11.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -501,11 +501,25 @@ class SbEntityBrowser extends HTMLElement {
       "unlocked", "above_horizon", "occupied", "wet"]);
 
     const chipsRow = (inner) => `<div class="chips">${inner}</div>`;
-    const textChips = (max) => [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, max)
-      .map(([s, c]) => this._chip(s, c)).join("");
+    // An "All" chip makes the group's unfiltered state VISIBLE. Without it the
+    // group silently means "everything" when nothing is selected, which reads as
+    // "no filter is doing anything" — the same trap as a stale selection below.
+    const allChip = (kind, active) =>
+      `<span class="chip allchip ${active ? "on" : ""}" data-all="${kind}">All</span>`;
+    // A selected state with no current count still gets a chip, greyed. Chips are
+    // built from states PRESENT in the matched set, so a selection left over from
+    // when some entity was e.g. Off would otherwise filter everything away with
+    // nothing on screen to clear — an invisible, unclearable filter (v0.11.1).
+    const textChips = (max) => {
+      const present = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, max);
+      const shown = new Set(present.map(([s]) => s));
+      const stale = [...this._selected].filter((s) => !shown.has(s)).map((s) => [s, 0]);
+      return allChip("states", this._selected.size === 0) +
+             present.concat(stale).map(([s, c]) => this._chip(s, c)).join("");
+    };
     const chipsHtml = numericMode
       ? thresholds.length
-        ? chipsRow(bucketCounts.map((c, i) =>
+        ? chipsRow(allChip("buckets", this._bsel.size === 0) + bucketCounts.map((c, i) =>
             `<span class="chip bchip ${this._bsel.has(i) ? "on" : ""}" data-b="${i}">${esc(bucketLabel(i))}<span class="n">${c}</span></span>`).join("") + textChips(8))
         : chipsRow(`<input type="number" class="minmax" id="min" placeholder="min" value="${esc(this._min)}">
            <span class="dash">–</span>
@@ -548,7 +562,12 @@ class SbEntityBrowser extends HTMLElement {
     }
 
     const filtered = !!(searchM || this._selected.size || this._bsel.size || this._min !== "" || this._max !== "");
-    const emptyHtml = `<div class="empty"><ha-icon icon="mdi:magnify-remove-outline"></ha-icon><div>No entities match${filtered ? " the current filters" : ""}</div></div>`;
+    // An escape hatch, not just a message. Search and min/max can empty the list
+    // with no chip to show for it, so the only way out must be on screen.
+    const emptyHtml = `<div class="empty"><ha-icon icon="mdi:magnify-remove-outline"></ha-icon>` +
+      `<div>No entities match${filtered ? " the current filters" : ""}</div>` +
+      (filtered ? `<div class="clear-all" role="button" tabindex="0">Clear filters</div>` : "") +
+      `</div>`;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -575,6 +594,11 @@ class SbEntityBrowser extends HTMLElement {
                 transition: background .12s, color .12s; }
         .chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
         .chip .n { opacity: .7; margin-left: 4px; }
+        .chip.allchip { font-weight: 500; }
+        .chip.zero { opacity: .55; border-style: dashed; }
+        .chip.zero.on { opacity: 1; }
+        .clear-all { margin-top: 8px; cursor: pointer; color: var(--primary-color);
+          font-size: .9em; text-decoration: underline; }
         .minmax { width: 70px; background: none; border: 1px solid var(--divider-color); border-radius: 8px;
                   color: var(--primary-text-color); padding: 3px 8px; }
         .dash { color: var(--secondary-text-color); align-self: center; }
@@ -659,7 +683,25 @@ class SbEntityBrowser extends HTMLElement {
       el.addEventListener("click", () => this._handleTap(id));
       el.addEventListener("keydown", (e) => e.key === "Enter" && this._handleTap(id));
     });
-    this.shadowRoot.querySelectorAll(".chip:not(.bchip)").forEach((el) => {
+    const clearAll = this.shadowRoot.querySelector(".clear-all");
+    if (clearAll) {
+      const doClear = () => {
+        this._selected.clear(); this._bsel.clear();
+        this._min = this._max = ""; this._search = "";
+        rerender();
+      };
+      clearAll.addEventListener("click", doClear);
+      clearAll.addEventListener("keydown", (e) => e.key === "Enter" && doClear());
+    }
+    this.shadowRoot.querySelectorAll(".allchip").forEach((el) => {
+      el.addEventListener("click", () => {
+        // Clears only its own group, so the bucket and state groups stay independent.
+        if (el.dataset.all === "buckets") this._bsel.clear();
+        else this._selected.clear();
+        rerender();
+      });
+    });
+    this.shadowRoot.querySelectorAll(".chip:not(.bchip):not(.allchip)").forEach((el) => {
       el.addEventListener("click", () => {
         const s = el.dataset.state;
         this._selected.has(s) ? this._selected.delete(s) : this._selected.add(s);
@@ -860,7 +902,10 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _chip(state, count) {
-    return `<span class="chip ${this._selected.has(state) ? "on" : ""}" data-state="${esc(state)}">${esc(state)}<span class="n">${count}</span></span>`;
+    const sel = this._selected.has(state);
+    return `<span class="chip ${sel ? "on" : ""}${count === 0 ? " zero" : ""}" data-state="${esc(state)}" ` +
+           `title="${count === 0 ? "Nothing is in this state right now — click to clear" : ""}">` +
+           `${esc(state)}<span class="n">${count}</span></span>`;
   }
 
   _dropTemplates() {
