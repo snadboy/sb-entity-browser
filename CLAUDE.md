@@ -216,3 +216,6 @@ makes Entity Browser an ordinary wrapped card — the same path as a map or a
 markdown card — instead of the one card with its own URL logic. `storage_id`
 stays: it keys the per-browser localStorage state, not the URL. Diagnostics
 show `filter: “…”` when set.
+
+v0.12.1: editor helper for `filter` points at SB Param Card's own dropdown
+(*Show a dropdown*); SB Filter Select no longer exists as such.

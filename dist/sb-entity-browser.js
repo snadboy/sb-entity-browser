@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.12.0";
+const VERSION = "0.12.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -1020,7 +1020,7 @@ class SbEntityBrowserEditor extends HTMLElement {
   _render() {
     if (!this._formTop) {
       const helperMap = {
-        filter: "Optional pattern applied WITHIN the patterns below. To drive it from an SB Filter Select, wrap this card in an SB Param Card and write its parameter here, e.g. $q$.",
+        filter: "Optional pattern applied WITHIN the patterns below. To drive it from a dropdown, wrap this card in an SB Param Card (Show a dropdown) and write its parameter here, e.g. $value$.",
         labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
         list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
