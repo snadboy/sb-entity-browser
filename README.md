@@ -21,9 +21,12 @@ persisted per browser.
 - **Two filter tiers.** The card's own config (patterns, labels, areas) is
   the **base** — its identity, always applied, never overridable. The
   **optional** tier narrows within it: the on-card search box, and the
-  `?seb-<storage_id>=<pattern>` URL parameter (what
-  [SB Filter Select](https://github.com/snadboy/sb-nav-select) sets; spaces
-  encode as `%20`/`+`). A URL filter shows a note with tap-to-clear.
+  `filter` option. To drive `filter` from a dropdown, wrap this card in an
+  [SB Param Card](https://github.com/snadboy/sb-param-card) (the socket) and
+  write its parameter there (`filter: $q$`); an
+  [SB Filter Select](https://github.com/snadboy/sb-nav-select) (the knob)
+  then chooses the value. Since 0.12.0 this card reads nothing from the URL
+  itself — it is wrapped like any other card.
   Want replace-style behavior? Give a card the base pattern `*` — everything
   is its universe, so the optional tier is the whole filter.
 - **State chips with counts** at the top of the card; tap to filter the list.

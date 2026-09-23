@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.11.1";
+const VERSION = "0.12.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -232,20 +232,10 @@ class SbEntityBrowser extends HTMLElement {
     return 4;
   }
 
-  // ?seb-<storage_id>=<pattern> overrides the configured patterns (labels and
-  // areas still constrain). Spaces arrive URL-encoded (%20 or +) and become a
-  // word query like any other spaced pattern.
+  // Since 0.12.0 this card knows nothing about the URL. To filter it from an
+  // SB Filter Select, wrap it in an SB Param Card and put that card's
+  // $parameter$ in `filter` — the same path every other card takes.
   connectedCallback() {
-    this._onNav = () => {
-      const u = this._urlPattern();
-      if (u !== this._lastUrlPat) {
-        this._lastUrlPat = u;
-        this._sig = "";
-        if (this._hass && this._config) this._render();
-      }
-    };
-    window.addEventListener("location-changed", this._onNav);
-    window.addEventListener("popstate", this._onNav);
     // Keep "Nm ago" honest — those only change when something re-renders.
     // HA builds cards DETACHED and re-attaches them during layout — the
     // render-time template arm bails while disconnected and the sweep dies
@@ -264,8 +254,6 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   disconnectedCallback() {
-    window.removeEventListener("location-changed", this._onNav);
-    window.removeEventListener("popstate", this._onNav);
     clearInterval(this._tick);
     clearInterval(this._tplSweep);
     clearInterval(this._iconSweep);
@@ -273,26 +261,22 @@ class SbEntityBrowser extends HTMLElement {
     this._dropTemplates();
   }
 
-  _urlPattern() {
-    try {
-      const v = new URLSearchParams(location.search).get(`seb-${this._config?.storage_id}`);
-      return v && v.trim() ? v.trim() : null;
-    } catch (e) {
-      return null;
-    }
+  _filter() {
+    const v = this._config?.filter;
+    return v && String(v).trim() ? String(v).trim() : null;
   }
 
   // Two filter tiers: the card's own config (patterns/labels/areas) is the
-  // BASE — the card's identity, always applied. The URL pattern (filter
-  // cards, bookmarks) and the search box are the OPTIONAL tier: they only
-  // narrow within the base. A card configured with pattern * has everything
-  // as its base, which recovers replace-like behavior when wanted.
-  _urlMatcher() {
-    return patternMatcher(this._urlPattern());
+  // BASE — the card's identity, always applied. `filter` (normally an SB
+  // Param Card's $parameter$) and the search box are the OPTIONAL tier: they
+  // only narrow within the base. A card configured with pattern * has
+  // everything as its base, which recovers replace-like behavior when wanted.
+  _filterMatcher() {
+    return patternMatcher(this._filter());
   }
 
   _matches() {
-    return matchInfo(this._hass, this._config, this._urlMatcher()).ids;
+    return matchInfo(this._hass, this._config, this._filterMatcher()).ids;
   }
 
   _signature() {
@@ -380,10 +364,8 @@ class SbEntityBrowser extends HTMLElement {
     this._lastRender = Date.now();
     this._sig = this._signature();
     const h = this._hass;
-    const urlPat = this._urlPattern();
-    this._lastUrlPat = urlPat;
     const cfg = this._config;
-    const { ids, patCounts } = matchInfo(h, cfg, this._urlMatcher());
+    const { ids, patCounts } = matchInfo(h, cfg, this._filterMatcher());
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
@@ -650,13 +632,10 @@ class SbEntityBrowser extends HTMLElement {
             ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
             : ""}
         </div>
-        ${urlPat
-          ? `<div class="note">URL filter: “${esc(urlPat)}” · <span class="url-clear" style="cursor:pointer; color:var(--primary-color); font-style:normal;">show configured</span></div>`
-          : ""}
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · URL key: seb-${esc(cfg.storage_id || "")} · v${VERSION}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs${this._filter() ? ` · filter: “${esc(this._filter())}”` : ""} · v${VERSION}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
@@ -777,16 +756,6 @@ class SbEntityBrowser extends HTMLElement {
           listEl.style.maxHeight = `min(${r0.offsetHeight * listRows}px, 70vh)`;
       });
     }
-    const clear = this.shadowRoot.querySelector(".url-clear");
-    if (clear)
-      clear.addEventListener("click", () => {
-        const params = new URLSearchParams(location.search);
-        params.delete(`seb-${this._config.storage_id}`);
-        const q = params.toString();
-        history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
-        this._onNav?.();
-      });
-
     // Jinja secondary info: subscriptions exist ONLY for rows actually ON
     // SCREEN — an IntersectionObserver subscribes rows as they scroll into
     // view (the scroll container, or the page viewport for the card itself)
@@ -1051,6 +1020,7 @@ class SbEntityBrowserEditor extends HTMLElement {
   _render() {
     if (!this._formTop) {
       const helperMap = {
+        filter: "Optional pattern applied WITHIN the patterns below. To drive it from an SB Filter Select, wrap this card in an SB Param Card and write its parameter here, e.g. $q$.",
         labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
         areas: "If set, entities must ALSO be in one of these areas.",
         list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
@@ -1063,6 +1033,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       };
       const labelMap = {
         title: "Title",
+        filter: "Narrowing filter",
         labels: "Labels",
         areas: "Areas",
         secondary: "Secondary info fields",
@@ -1090,7 +1061,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         });
         return f;
       };
-      this._formTop = mkForm([{ name: "title", selector: { text: {} } }]);
+      this._formTop = mkForm([{ name: "title", selector: { text: {} } }, { name: "filter", selector: { text: {} } }]);
       // hass BEFORE appending, so the form's first render already has it.
       // (This did NOT fix the `localize` TypeError seen when the editor is
       // instantiated bare on a dashboard page: that throw is inside HA's

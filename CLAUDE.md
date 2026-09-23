@@ -204,3 +204,15 @@ release. HACS: update_information → download (users: Update in HACS), then
   hassTokens localStorage recipe); walks shadow roots counting cards/chips/rows.
 - Roadmap: Jinja secondary info (WS render_template subscription per row —
   budget it), numeric bucket presets, group-by domain/area.
+
+## v0.12.0 — no longer reads the URL (2026-09-23)
+
+The `?seb-<storage_id>=` handling, the "URL filter … show configured" note
+and the `location-changed`/`popstate` listeners are gone. The optional tier
+is now the **`filter`** option (editor field "Narrowing filter"); to drive it
+from a dropdown, wrap the card in an SB Param Card (the socket) with
+`filter: $q$` and point an SB Filter Select (the knob) at the socket. This
+makes Entity Browser an ordinary wrapped card — the same path as a map or a
+markdown card — instead of the one card with its own URL logic. `storage_id`
+stays: it keys the per-browser localStorage state, not the URL. Diagnostics
+show `filter: “…”` when set.
