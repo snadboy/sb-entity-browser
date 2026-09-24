@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.0";
+const VERSION = "0.14.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -65,8 +65,10 @@ const matchInfo = (hass, config, extra) => {
   // constrain and labels/areas decide alone.
   const matchers = (config.patterns || []).map(patternMatcher);
   const active = matchers.filter(Boolean).length;
-  const labels = config.labels || [];
-  const areas = config.areas || [];
+  // HA's pickers emit "___no_items_available___" as a placeholder; never match on it.
+  const clean = (l) => (l || []).filter((v) => v && !String(v).startsWith("___"));
+  const labels = clean(config.labels);
+  const areas = clean(config.areas);
   const patCounts = new Array(matchers.length).fill(0);
   const ids = [];
   for (const id of Object.keys(hass.states)) {

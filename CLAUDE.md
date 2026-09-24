@@ -252,3 +252,6 @@ as "from a Param Card". Areas/labels stay pickers — the Param Card's
 `filter: $x$` to `"base $x$"` patterns (`rewire_filter_to_pattern.py`);
 a Home-view card with `filter: hub` and no patterns became `patterns: [hub]`
 (equivalent).
+
+v0.14.1: `matchInfo` ignores `___no_items_available___` placeholders in
+`labels`/`areas` — HA's pickers emit that when their list is empty.
