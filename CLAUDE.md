@@ -255,3 +255,14 @@ a Home-view card with `filter: hub` and no patterns became `patterns: [hub]`
 
 v0.14.1: `matchInfo` ignores `___no_items_available___` placeholders in
 `labels`/`areas` — HA's pickers emit that when their list is empty.
+
+## v0.14.2 — unconfigured = empty state, not an error (2026-09-24)
+
+Under an SB Param Card the browser starts with empty `labels`/`areas`
+until the user picks something; `setConfig` threw "Configure at least one
+entity pattern, label, or area" and HA rendered a red error card in the
+knob's socket. Now `_unconfigured` is set instead, matching yields nothing
+(never the whole estate — the render path calls `matchInfo` directly, so
+it is guarded there too, not only in `_matches()`), and the list shows
+"Choose an area or label, or configure an entity pattern". `clean()` also
+accepts a single string in `labels`/`areas`.

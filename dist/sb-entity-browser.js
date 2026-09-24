@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.1";
+const VERSION = "0.14.2";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -66,7 +66,8 @@ const matchInfo = (hass, config, extra) => {
   const matchers = (config.patterns || []).map(patternMatcher);
   const active = matchers.filter(Boolean).length;
   // HA's pickers emit "___no_items_available___" as a placeholder; never match on it.
-  const clean = (l) => (l || []).filter((v) => v && !String(v).startsWith("___"));
+  // A wrapper may hand over one id as a plain string; HA pickers may leave a "___no_items_available___" placeholder.
+  const clean = (l) => (Array.isArray(l) ? l : l == null || l === "" ? [] : [l]).filter((v) => v && !String(v).startsWith("___"));
   const labels = clean(config.labels);
   const areas = clean(config.areas);
   const patCounts = new Array(matchers.length).fill(0);
@@ -164,12 +165,12 @@ class SbEntityBrowser extends HTMLElement {
     // so it must not count as "configured" here either — a lone blank row
     // with no label or area would otherwise render the whole estate.
     const realPatterns = (config?.patterns || []).filter((p) => p && p.trim());
-    if (
-      !config ||
-      (!realPatterns.length && !(config.labels || []).length && !(config.areas || []).length)
-    ) {
-      throw new Error("Configure at least one entity pattern, label, or area");
-    }
+    if (!config) throw new Error("Configure at least one entity pattern, label, or area");
+    // Nothing to match on: not an error any more. Under an SB Param Card the
+    // wrapped browser starts with empty labels/areas until a choice is made,
+    // and an HA error card there reads as broken. Render an empty state and
+    // match nothing (never the whole estate).
+    this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length;
     this._config = {
       secondary: ["state"],
       tap_action: { action: "more-info" },
@@ -268,6 +269,7 @@ class SbEntityBrowser extends HTMLElement {
   // The card's config (patterns/labels/areas) is its identity; the search box
   // is the only runtime narrowing on top of it.
   _matches() {
+    if (this._unconfigured) return [];
     return matchInfo(this._hass, this._config, null).ids;
   }
 
@@ -357,7 +359,7 @@ class SbEntityBrowser extends HTMLElement {
     this._sig = this._signature();
     const h = this._hass;
     const cfg = this._config;
-    const { ids, patCounts } = matchInfo(h, cfg, null);
+    const { ids, patCounts } = this._unconfigured ? { ids: [], patCounts: [] } : matchInfo(h, cfg, null);
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
@@ -538,8 +540,8 @@ class SbEntityBrowser extends HTMLElement {
     const filtered = !!(searchM || this._selected.size || this._bsel.size || this._min !== "" || this._max !== "");
     // An escape hatch, not just a message. Search and min/max can empty the list
     // with no chip to show for it, so the only way out must be on screen.
-    const emptyHtml = `<div class="empty"><ha-icon icon="mdi:magnify-remove-outline"></ha-icon>` +
-      `<div>No entities match${filtered ? " the current filters" : ""}</div>` +
+    const emptyHtml = `<div class="empty"><ha-icon icon="${this._unconfigured ? "mdi:filter-variant" : "mdi:magnify-remove-outline"}"></ha-icon>` +
+      `<div>${this._unconfigured ? "Choose an area or label, or configure an entity pattern" : `No entities match${filtered ? " the current filters" : ""}`}</div>` +
       (filtered ? `<div class="clear-all" role="button" tabindex="0">Clear filters</div>` : "") +
       `</div>`;
 
