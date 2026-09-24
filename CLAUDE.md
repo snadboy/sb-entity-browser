@@ -266,3 +266,15 @@ knob's socket. Now `_unconfigured` is set instead, matching yields nothing
 it is guarded there too, not only in `_matches()`), and the list shows
 "Choose an area or label, or configure an entity pattern". `clean()` also
 accepts a single string in `labels`/`areas`.
+
+## v0.14.3 — group by label (2026-09-24)
+
+User: "sb entity cannot group by label". `group_by`/header selector gain
+`label`. Names come from `config/label_registry/list` (hass carries no
+label registry), fetched once per card, render forced on arrival, names
+TRIMMED — 42 live labels are named " MTR …" with a leading space and
+sorted ahead of everything. An entity's labels = own + device's
+(`entityLabelIds`, now shared with matching); an entity with several is
+listed under EACH (rows become `[id, st, group]` in label mode), the
+header count stays unique entities (284, not 304 rows). Measured on demo
+⑥'s browser: 15 groups, 3 BILRESA entities appear twice.

@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.2";
+const VERSION = "0.14.3";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -51,6 +51,15 @@ const patternMatcher = (p) => {
     );
 };
 
+// An entity's labels: its own plus its device's (HA does not propagate
+// device labels to entities; the registry labels a device in one click).
+const entityLabelIds = (hass, id) => {
+  const reg = hass.entities?.[id];
+  const own = reg?.labels || [];
+  const dev = reg?.device_id ? hass.devices?.[reg.device_id]?.labels || [] : [];
+  return [...new Set([...own, ...dev])];
+};
+
 const entityAreaId = (hass, id) => {
   const reg = hass.entities?.[id];
   return reg?.area_id || hass.devices?.[reg?.device_id]?.area_id || null;
@@ -89,10 +98,7 @@ const matchInfo = (hass, config, extra) => {
       // carries. HA does not propagate device labels to entities, and the
       // registry lets you label a device in one click — so "Matter Hub" on
       // seven plugs matched zero entities and the card looked broken.
-      const reg = hass.entities?.[id];
-      const own = reg?.labels || [];
-      const dev = reg?.device_id ? hass.devices?.[reg.device_id]?.labels || [] : [];
-      if (!own.some((l) => labels.includes(l)) && !dev.some((l) => labels.includes(l))) continue;
+      if (!entityLabelIds(hass, id).some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
     if (extra && !extra(id, name, st.state, fmt)) continue;
@@ -266,6 +272,18 @@ class SbEntityBrowser extends HTMLElement {
     this._dropTemplates();
   }
 
+  // Label id → name, once per card; a render is forced when it arrives.
+  _fetchLabels() {
+    if (this._labelNames || this._labelsPending || !this._hass?.callWS) return;
+    this._labelsPending = true;
+    this._hass.callWS({ type: "config/label_registry/list" }).then((list) => {
+      // trimmed: a label named " MTR …" (leading space, seen live) would otherwise sort ahead of everything
+      this._labelNames = Object.fromEntries((list || []).map((l) => [l.label_id, String(l.name || "").trim() || l.label_id]));
+      this._sig = null;
+      this._render();
+    }).catch(() => { this._labelsPending = false; });
+  }
+
   // The card's config (patterns/labels/areas) is its identity; the search box
   // is the only runtime narrowing on top of it.
   _matches() {
@@ -425,8 +443,22 @@ class SbEntityBrowser extends HTMLElement {
     const dir = cfg.sort_dir === "desc" ? -1 : 1;
     // Viewer's header selection (per browser) overrides the configured default.
     const groupSel = this._gsel ?? cfg.group_by;
-    const groupBy = ["floor", "area", "state", "domain"].includes(groupSel) ? groupSel : null;
-    const groupOf = (id, st) => {
+    const groupBy = ["floor", "area", "state", "domain", "label"].includes(groupSel) ? groupSel : null;
+    if (groupBy === "label") {
+      // Label names live in the label registry, which `hass` does not carry;
+      // fetched once, the list re-renders when it lands (ids shown until then).
+      this._fetchLabels();
+      // An entity can carry several labels (its own + its device's): it is
+      // listed under EACH of them, so a label group is complete on its own.
+      // Row = [id, state, group] from here on; a label-less entity gets one.
+      const names = this._labelNames || {};
+      rows = rows.flatMap(([id, st]) => {
+        const ls = entityLabelIds(h, id);
+        return ls.length ? ls.map((l) => [id, st, names[l] || l]) : [[id, st, "No label"]];
+      });
+    }
+    const groupOf = (id, st, g) => {
+      if (g != null) return g;
       if (groupBy === "domain") return id.split(".")[0];
       if (groupBy === "state") return st.state;
       if (groupBy === "floor") {
@@ -449,7 +481,7 @@ class SbEntityBrowser extends HTMLElement {
     };
     rows.sort((a, b) => {
       if (groupBy) {
-        const g = groupOf(a[0], a[1]).localeCompare(groupOf(b[0], b[1]));
+        const g = groupOf(a[0], a[1], a[2]).localeCompare(groupOf(b[0], b[1], b[2]));
         if (g) return g;
       }
       return base(a, b);
@@ -459,7 +491,7 @@ class SbEntityBrowser extends HTMLElement {
     // back to 10) — the list never grows past it, everything else scrolls.
     const listRows = Math.max(3, parseInt(cfg.list_rows) || 10);
     const renderCap = 500;
-    const shown = rows.length;
+    const shown = groupBy === "label" ? new Set(rows.map((r) => r[0])).size : rows.length;   // label mode lists an entity once per label
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
     // Absolute ceiling on top of the row cap: the list never exceeds 70% of
@@ -524,10 +556,10 @@ class SbEntityBrowser extends HTMLElement {
     if (groupBy) {
       let i = 0;
       while (i < rows.length) {
-        const g = groupOf(rows[i][0], rows[i][1]);
+        const g = groupOf(rows[i][0], rows[i][1], rows[i][2]);
         groupKeys.push(g);
         let j = i;
-        while (j < rows.length && groupOf(rows[j][0], rows[j][1]) === g) j++;
+        while (j < rows.length && groupOf(rows[j][0], rows[j][1], rows[j][2]) === g) j++;
         const coll = this._coll.has(g);
         rowsHtml += `<div class="grp" data-g="${esc(g)}"><ha-icon icon="mdi:chevron-${coll ? "right" : "down"}"></ha-icon>${esc(g)}<span class="n">${j - i}</span></div>`;
         if (!coll) rowsHtml += rows.slice(i, j).map(rowHtml).join("");
@@ -614,7 +646,7 @@ class SbEntityBrowser extends HTMLElement {
           <div class="title">${esc(cfg.title || "")}</div>
           <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
           ${cfg.show_group_selector
-            ? `<select class="gsel" title="Group by">${["none", "floor", "area", "state", "domain"]
+            ? `<select class="gsel" title="Group by">${["none", "floor", "area", "state", "domain", "label"]
                 .map((g) => `<option value="${g}" ${g === (groupBy || "none") ? "selected" : ""}>${g === "none" ? "No grouping" : g[0].toUpperCase() + g.slice(1)}</option>`)
                 .join("")}</select>`
             : ""}
@@ -944,7 +976,7 @@ const HELPERS = {
   show_group_selector: "Lets the viewer switch grouping; their choice sticks per browser and overrides the Group by default.",
 };
 const OPT = {
-  group_by: [["none", "No grouping"], ["floor", "Floor"], ["area", "Area"], ["state", "State"], ["domain", "Domain"]],
+  group_by: [["none", "No grouping"], ["floor", "Floor"], ["area", "Area"], ["state", "State"], ["domain", "Domain"], ["label", "Label"]],
   density: [["comfortable", "Comfortable (two lines)"], ["compact", "Compact (one line)"]],
   state_style: [["text", "Text"], ["pill", "Pill"]],
   sort: [["name", "Name"], ["state", "State"], ["last_changed", "Last changed"]],
