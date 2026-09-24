@@ -44,6 +44,13 @@ persisted per browser.
   (localStorage keyed by the card's `storage_id`) — two cards, two dashboards,
   two devices never couple, because there is no shared entity behind it.
 
+## Editing
+
+The editor is a read-only overview of three groups — **Matching** (with a live
+"matches now" count), **Display**, **Controls** — each with an *Edit* button
+that opens one focused dialog. Edits apply live to the preview; *Cancel*
+restores.
+
 ## Installation (HACS)
 
 1. HACS → custom repositories → `snadboy/sb-entity-browser`, category **Dashboard**.

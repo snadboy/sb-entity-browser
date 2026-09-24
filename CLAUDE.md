@@ -219,3 +219,22 @@ show `filter: “…”` when set.
 
 v0.12.1: editor helper for `filter` points at SB Param Card's own dropdown
 (*Show a dropdown*); SB Filter Select no longer exists as such.
+
+## v0.13.0 — the editor is an overview with dialogs (2026-09-23)
+
+Same shell as SB Param Card's editor (copied by hand — no build step; keep
+the two in step). Three groups: **Matching** (patterns with live per-row
+counts, labels, areas, narrowing filter — flagged "from a Param Card" when
+it holds a `$token$`), **Display** (title, row density/state style,
+secondary fields, Jinja line, grouping, sort, rows, buckets), **Controls**
+(search box, group selector, diagnostics, tap action). The overview also
+shows "Matches now: N entities" via `matchInfo` (a full scan; recomputed on
+open and after edits, debounced, not on hass ticks) and warns past 500.
+
+Edits apply live but DEBOUNCED (`TYPING_QUIET_MS`, as before — per-keystroke
+emits rebuilt the preview per character); toggles emit immediately. Cancel
+restores the snapshot; closing flushes any pending debounced emit so the
+last keystroke is never lost. Verified headless (`eb_editor_test.js`,
+`eb_live_check.js`): standalone on Monitor → Home, and wrapped four deep
+(HA editor → Param Card's Wrapped-card dialog → this overview → Matching
+dialog), both `:modal`, inner Done leaves the outer open, no page errors.

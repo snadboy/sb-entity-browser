@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.12.1";
+const VERSION = "0.13.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -885,6 +885,81 @@ class SbEntityBrowser extends HTMLElement {
 
 }
 
+// ============================================================================
+// The editor: an OVERVIEW of grouped, read-only settings — Matching, Display,
+// Controls — each with an Edit button that opens ONE focused dialog. The same
+// shell as SB Param Card's editor (kept in step by hand; no build step).
+// Native <dialog> + showModal(): the browser's top layer, so it stacks over
+// HA's card-editor dialog — and over a Param Card's "Wrapped card" dialog
+// when this card is wrapped. Edits apply live (debounced, so typing a
+// pattern does not rebuild the preview per keystroke); a snapshot is taken on
+// open, Cancel restores it, Done / ✕ / Escape keep.
+// ============================================================================
+
+const EDITOR_STYLE = `
+  .spe { color: var(--primary-text-color); }
+  .spe .sec { background: var(--secondary-background-color, rgba(127,127,127,.08)); border: 1px solid var(--divider-color); border-radius: 10px; margin-bottom: 12px; }
+  .spe .sec h3 { margin: 0; padding: 10px 14px; font-size: .95em; font-weight: 500; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--divider-color); }
+  .spe .sec h3 button { font: inherit; font-size: .8em; color: var(--primary-color); background: none; border: 1px solid var(--primary-color); border-radius: 14px; padding: 3px 12px; cursor: pointer; }
+  .spe .rows { padding: 8px 14px 10px; }
+  .spe .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: .9em; }
+  .spe .row .k { color: var(--secondary-text-color); white-space: nowrap; }
+  .spe .row .v { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+  .spe code { background: rgba(127,127,127,.2); padding: 1px 6px; border-radius: 4px; font-size: .9em; }
+  .spe .chip { display: inline-block; background: rgba(127,127,127,.2); border-radius: 10px; padding: 1px 8px; margin-left: 4px; font-size: .85em; }
+  .spe .off { color: var(--secondary-text-color); font-style: italic; }
+  .spe .warn { color: var(--warning-color, orange); }
+  .spe .note { color: var(--secondary-text-color); font-size: .8em; padding: 2px 4px 6px; }
+  dialog.sped { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0; width: min(600px, 92vw); max-height: 85vh;
+    background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  dialog.sped::backdrop { background: rgba(0,0,0,.45); }
+  dialog.sped .ph { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--divider-color); font-weight: 500; }
+  dialog.sped .ph button { font: inherit; background: none; border: none; color: var(--secondary-text-color); font-size: 1.2em; cursor: pointer; }
+  dialog.sped .pb { padding: 14px 18px; max-height: calc(85vh - 130px); overflow: auto; }
+  dialog.sped .pf { display: flex; justify-content: flex-end; gap: 10px; padding: 10px 18px 16px; border-top: 1px solid var(--divider-color); }
+  dialog.sped .pf button { font: inherit; font-size: .9em; padding: 8px 18px; border-radius: 20px; border: none; cursor: pointer; background: none; color: var(--primary-color); }
+  dialog.sped .pf button.done { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  dialog.sped .hint { color: var(--secondary-text-color); font-size: .8em; padding: 6px 2px 10px; }
+  dialog.sped .sub { color: var(--secondary-text-color); font-size: .75em; letter-spacing: .04em; text-transform: uppercase; margin: 10px 0 6px; }
+  dialog.sped .prow { display: flex; align-items: center; gap: 4px; }
+  dialog.sped .prow input { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; color: var(--primary-text-color);
+    background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none; border-bottom: 1px solid var(--divider-color);
+    border-radius: 4px 4px 0 0; padding: 14px 12px; outline-color: var(--primary-color); }
+  dialog.sped .prow .del { cursor: pointer; color: var(--secondary-text-color); padding: 8px 8px 8px 4px; }
+  dialog.sped .count { color: var(--secondary-text-color); font-size: .8em; padding: 3px 12px 0; }
+  dialog.sped .link { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--primary-color); font-size: .95em; padding: 2px 4px 10px; }
+`;
+
+const LABELS = {
+  title: "Title", filter: "Narrowing filter", labels: "Labels", areas: "Areas",
+  secondary: "Secondary info fields", sort: "Sort by", sort_dir: "Sort direction",
+  secondary_template: "Jinja secondary line", buckets: "Numeric buckets", state_style: "State display",
+  density: "Density", group_by: "Group by", show_search: "Show search box",
+  show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
+  tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
+};
+const HELPERS = {
+  filter: "Optional pattern applied WITHIN the patterns above. To drive it from a dropdown, wrap this card in an SB Param Card (Show a dropdown) and write its parameter here, e.g. $value$.",
+  labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
+  areas: "If set, entities must ALSO be in one of these areas.",
+  list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
+  sort_dir: "For Last changed: ascending = oldest first.",
+  tap_action: "Perform-action with an empty target acts on the clicked entity.",
+  secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
+  buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 → chips <20 · 20–50 · >50. Empty = min/max inputs.",
+  show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
+  show_group_selector: "Lets the viewer switch grouping; their choice sticks per browser and overrides the Group by default.",
+};
+const OPT = {
+  group_by: [["none", "No grouping"], ["floor", "Floor"], ["area", "Area"], ["state", "State"], ["domain", "Domain"]],
+  density: [["comfortable", "Comfortable (two lines)"], ["compact", "Compact (one line)"]],
+  state_style: [["text", "Text"], ["pill", "Pill"]],
+  sort: [["name", "Name"], ["state", "State"], ["last_changed", "Last changed"]],
+  sort_dir: [["asc", "Ascending"], ["desc", "Descending"]],
+};
+const optLabel = (k, v, dflt) => (OPT[k].find(([val]) => val === (v ?? dflt)) || [v, v])[1];
+const sel = (name) => ({ name, selector: { select: { mode: "dropdown", options: OPT[name].map(([value, label]) => ({ value, label })) } } });
+
 class SbEntityBrowserEditor extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
@@ -894,14 +969,15 @@ class SbEntityBrowserEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const first = !this._hass;
     this._hass = hass;
-    if (this._formTop) this._formTop.hass = hass;
-    if (this._formRest) this._formRest.hass = hass;
+    if (this._form) this._form.hass = hass;
     // hass ticks are frequent; the counts don't need sub-second freshness.
     const now = Date.now();
     if (now - (this._lastCounts || 0) > 2000) {
       this._lastCounts = now;
       this._refreshCounts();
+      if (first) this._renderOverview();
     }
   }
 
@@ -909,12 +985,175 @@ class SbEntityBrowserEditor extends HTMLElement {
   // card on every character, which is what made typing sluggish. 400 ms sits
   // above a normal typing rhythm (150–350 ms between keys), so intermediate
   // patterns like "o" — which matches most of the estate — are never built.
-  _emit() {
+  _emit(now = false) {
     clearTimeout(this._emitTimer);
-    this._emitTimer = setTimeout(
-      () => fire(this, "config-changed", { config: this._config }), TYPING_QUIET_MS);
+    const go = () => fire(this, "config-changed", { config: this._config });
+    now ? go() : (this._emitTimer = setTimeout(go, TYPING_QUIET_MS));
   }
 
+  _set(patch, now = false) {
+    this._config = { ...this._config, ...patch };
+    this._emit(now);
+    this._scheduleOverview();
+  }
+
+  // ---- overview -----------------------------------------------------------
+  _scheduleOverview() {
+    clearTimeout(this._ovTimer);
+    this._ovTimer = setTimeout(() => this._renderOverview(), TYPING_QUIET_MS);
+  }
+
+  _total() {
+    if (!this._hass) return null;
+    try { return matchInfo(this._hass, this._config, null).ids.length; } catch (e) { return null; }
+  }
+
+  _summaryMatching() {
+    const c = this._config;
+    const pats = (c.patterns || []).filter((p) => p && p.trim());
+    const total = this._total();
+    return [
+      ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
+      ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
+      ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
+      ["Narrowing filter", c.filter ? `<code>${esc(c.filter)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(c.filter) ? `<span class="chip">from a Param Card</span>` : ""}` : `<span class="off">none</span>`],
+      ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
+    ];
+  }
+
+  _summaryDisplay() {
+    const c = this._config;
+    const sec = (c.secondary || []).map((k) => (SECONDARY_OPTIONS.find((o) => o.value === k) || { label: k }).label);
+    return [
+      ["Title", c.title ? esc(c.title) : `<span class="off">none</span>`],
+      ["Row", `${optLabel("density", c.density, "comfortable")} · ${optLabel("state_style", c.state_style, "text")} state`],
+      ["Secondary", sec.length ? esc(sec.join(", ")) : `<span class="off">none</span>`],
+      ...(c.secondary_template ? [["Jinja line", `<code>${esc(String(c.secondary_template).slice(0, 48))}${String(c.secondary_template).length > 48 ? "…" : ""}</code>`]] : []),
+      ["Group by", optLabel("group_by", c.group_by, "none")],
+      ["Sort", `${optLabel("sort", c.sort, "name")} ${optLabel("sort_dir", c.sort_dir, "asc").toLowerCase()}`],
+      ["Rows shown", `${c.list_rows || 10}${c.buckets ? ` · buckets ${esc(c.buckets)}` : ""}`],
+    ];
+  }
+
+  _summaryControls() {
+    const c = this._config;
+    const on = (v) => (v ? "on" : `<span class="off">off</span>`);
+    const a = c.tap_action || { action: "more-info" };
+    return [
+      ["Search box", on(c.show_search)],
+      ["Group-by selector", on(c.show_group_selector)],
+      ["Diagnostics button", on(c.diagnostics_button)],
+      ["Tap action", esc((a.action || "more-info").replace(/[-_]/g, " ")) + (a.navigation_path ? ` <code>${esc(a.navigation_path)}</code>` : "") + (a.perform_action || a.service ? ` <code>${esc(a.perform_action || a.service)}</code>` : "")],
+    ];
+  }
+
+  _renderOverview() {
+    if (!this._ov) return;
+    const sec = (id, title, rows) => `<div class="sec"><h3>${title}<button data-sec="${id}">Edit</button></h3>
+      <div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div></div>`;
+    this._ov.innerHTML =
+      sec("matching", "Matching", this._summaryMatching()) +
+      sec("display", "Display", this._summaryDisplay()) +
+      sec("controls", "Controls", this._summaryControls()) +
+      `<div class="note">Patterns, labels and areas are the card's identity, always applied. The narrowing filter and the search box only narrow within them.</div>`;
+    this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
+  }
+
+  _render() {
+    if (!this._ov) {
+      this.classList.add("spe");
+      const st = document.createElement("style");
+      st.textContent = EDITOR_STYLE;
+      this.appendChild(st);
+      this._ov = document.createElement("div");
+      this.appendChild(this._ov);
+    }
+    this._renderOverview();
+  }
+
+  // ---- dialogs -------------------------------------------------------------
+  _openDialog(id) {
+    this._closeDialog(false);
+    this._open = id;
+    this._snap = JSON.parse(JSON.stringify(this._config));
+    const d = document.createElement("dialog");
+    d.className = "sped";
+    d.innerHTML = `<div class="ph"><span>${{ matching: "Matching", display: "Display", controls: "Controls" }[id]}</span><button class="x" title="Close">✕</button></div>
+      <div class="pb"></div>
+      <div class="pf"><button class="cancel">Cancel</button><button class="done">Done</button></div>`;
+    this.appendChild(d);
+    this._dlg = d;
+    d.querySelector(".x").addEventListener("click", () => this._closeDialog(false));
+    d.querySelector(".done").addEventListener("click", () => this._closeDialog(false));
+    d.querySelector(".cancel").addEventListener("click", () => this._closeDialog(true));
+    d.addEventListener("cancel", (e) => { e.preventDefault(); this._closeDialog(false); });   // Escape keeps (edits are live)
+    d.addEventListener("close", () => { if (this._dlg === d) this._closeDialog(false); });
+    this._renderDialogBody();
+    d.showModal();
+  }
+
+  _closeDialog(restore) {
+    const d = this._dlg;
+    if (!d) return;
+    this._dlg = null; this._open = null; this._form = null; this._patRows = null; this._patWrap = null;
+    clearTimeout(this._emitTimer);
+    if (restore && this._snap) { this._config = this._snap; }
+    this._emit(true);                       // flush: a pending debounced edit, or the restore
+    this._snap = null;
+    try { d.close(); } catch (e) { /* already closed */ }
+    d.remove();
+    this._renderOverview();
+  }
+
+  _mkForm(schema, onChange) {
+    const f = document.createElement("ha-form");
+    f.hass = this._hass;
+    f.computeLabel = (s) => LABELS[s.name] || s.name;
+    f.computeHelper = (s) => HELPERS[s.name];
+    f.schema = schema;
+    f.data = this._config;
+    f.addEventListener("value-changed", (e) => { e.stopPropagation(); onChange(e.detail.value); });
+    return f;
+  }
+
+  _renderDialogBody() {
+    const d = this._dlg;
+    if (!d) return;
+    const body = d.querySelector(".pb");
+    body.innerHTML = "";
+    if (this._open === "matching") {
+      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Entity patterns"; body.appendChild(sub);
+      this._patWrap = document.createElement("div"); body.appendChild(this._patWrap);
+      this._patRows = null;
+      this._renderPatterns();
+      this._form = this._mkForm([
+        { name: "labels", selector: { label: { multiple: true } } },
+        { name: "areas", selector: { area: { multiple: true } } },
+        { name: "filter", selector: { text: {} } },
+      ], (v) => this._set(v));
+      body.appendChild(this._form);
+    } else if (this._open === "display") {
+      this._form = this._mkForm([
+        { name: "title", selector: { text: {} } },
+        { name: "secondary", selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } } },
+        { name: "secondary_template", selector: { text: { multiline: true } } },
+        sel("group_by"), sel("density"), sel("state_style"), sel("sort"), sel("sort_dir"),
+        { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
+        { name: "buckets", selector: { text: {} } },
+      ], (v) => this._set(v));
+      body.appendChild(this._form);
+    } else {
+      this._form = this._mkForm([
+        { name: "show_search", selector: { boolean: {} } },
+        { name: "show_group_selector", selector: { boolean: {} } },
+        { name: "diagnostics_button", selector: { boolean: {} } },
+        { name: "tap_action", selector: { ui_action: {} } },
+      ], (v) => this._set(v, true));
+      body.appendChild(this._form);
+    }
+  }
+
+  // ---- pattern rows (Matching dialog) ---------------------------------------
   // The live "Matches N entities" line is a full-estate scan per pattern row;
   // per keystroke that is a costly search too, so it waits for the same quiet.
   _scheduleCounts() {
@@ -934,13 +1173,12 @@ class SbEntityBrowserEditor extends HTMLElement {
     return n;
   }
 
-  // Each pattern row's count line lives directly under its input.
   _refreshCounts() {
     (this._patRows || []).forEach(({ input, count }) => {
       const n = this._count(input.value);
       count.textContent =
         n == null
-          ? "Matches ids and friendly names (any word order, case-insensitive, * wildcards) — or an entity\u2019s exact state (“CR2450”)"
+          ? "Matches ids and friendly names (any word order, case-insensitive, * wildcards) — or an entity’s exact state (“CR2450”)"
           : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
     });
   }
@@ -949,9 +1187,9 @@ class SbEntityBrowserEditor extends HTMLElement {
   // on ordinary re-renders just sync values, skipping the focused field —
   // rebuilding on every keystroke would steal focus. Plain <input>s, NOT
   // ha-textfield: that component isn't reliably defined outside ha-form's
-  // lazy loading, and pre-upgrade property sets are shadowed (rendered as an
-  // invisible unknown element).
+  // lazy loading, and pre-upgrade property sets are shadowed.
   _renderPatterns() {
+    if (!this._patWrap) return;
     const pats = this._config.patterns || [];
     if (this._patRows && this._patRows.length === pats.length) {
       this._patRows.forEach(({ input }, i) => {
@@ -966,204 +1204,43 @@ class SbEntityBrowserEditor extends HTMLElement {
     pats.forEach((p, i) => {
       const block = document.createElement("div");
       block.style.cssText = "margin-bottom:10px;";
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex; align-items:center; gap:4px;";
+      const row = document.createElement("div"); row.className = "prow";
       const input = document.createElement("input");
       input.type = "text";
       input.value = p || "";
       input.placeholder = "e.g. switch.rack_* or fp300 occupancy";
       input.autocomplete = "off";
-      input.style.cssText =
-        "flex:1; box-sizing:border-box; font:inherit; color:var(--primary-text-color);" +
-        "background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12));" +
-        "border:none; border-bottom:1px solid var(--divider-color);" +
-        "border-radius:4px 4px 0 0; padding:14px 12px; outline-color:var(--primary-color);";
       input.addEventListener("input", () => {
         const arr = [...(this._config.patterns || [])];
         arr[i] = input.value;
-        this._config = { ...this._config, patterns: arr };
+        this._set({ patterns: arr });
         this._scheduleCounts();
-        this._emit();
       });
       const del = document.createElement("ha-icon");
       del.icon = "mdi:delete-outline";
       del.title = "Remove pattern";
-      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:8px 8px 8px 4px;";
+      del.className = "del";
       del.addEventListener("click", () => {
         const arr = [...(this._config.patterns || [])];
         arr.splice(i, 1);
-        this._config = { ...this._config, patterns: arr };
+        this._set({ patterns: arr }, true);
         this._renderPatterns();
-        this._emit();
       });
       row.append(input, del);
-      const count = document.createElement("div");
-      count.style.cssText =
-        "color:var(--secondary-text-color); font-size:.8em; padding:3px 12px 0;";
+      const count = document.createElement("div"); count.className = "count";
       block.append(row, count);
       this._patWrap.appendChild(block);
       this._patRows.push({ input, count });
     });
-    const add = document.createElement("div");
-    add.style.cssText =
-      "display:inline-flex; align-items:center; gap:4px; cursor:pointer; color:var(--primary-color); font-size:.95em; padding:2px 4px 10px;";
+    const add = document.createElement("div"); add.className = "link";
     add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add pattern`;
     add.addEventListener("click", () => {
-      this._config = { ...this._config, patterns: [...(this._config.patterns || []), ""] };
+      this._set({ patterns: [...(this._config.patterns || []), ""] });
       this._renderPatterns();
       this._patRows[this._patRows.length - 1]?.input.focus();
     });
     this._patWrap.appendChild(add);
     this._refreshCounts();
-  }
-
-  _render() {
-    if (!this._formTop) {
-      const helperMap = {
-        filter: "Optional pattern applied WITHIN the patterns below. To drive it from a dropdown, wrap this card in an SB Param Card (Show a dropdown) and write its parameter here, e.g. $value$.",
-        labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
-        areas: "If set, entities must ALSO be in one of these areas.",
-        list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
-        sort_dir: "For Last changed: ascending = oldest first.",
-        tap_action: "Perform-action with an empty target acts on the clicked entity.",
-        secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
-        buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 \u2192 chips <20 \u00b7 20\u201350 \u00b7 >50. Empty = min/max inputs.",
-        show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
-        show_group_selector: "Lets the viewer switch grouping; their choice sticks per browser and overrides the Group by default.",
-      };
-      const labelMap = {
-        title: "Title",
-        filter: "Narrowing filter",
-        labels: "Labels",
-        areas: "Areas",
-        secondary: "Secondary info fields",
-        sort: "Sort by",
-        sort_dir: "Sort direction",
-        secondary_template: "Jinja secondary line",
-        buckets: "Numeric buckets",
-        state_style: "State display",
-        density: "Density",
-        group_by: "Group by",
-        show_search: "Show search box",
-        show_group_selector: "Show group-by selector on card",
-        list_rows: "Max visible rows",
-        tap_action: "Tap action",
-        diagnostics_button: "Show diagnostics (F12) button",
-      };
-      const mkForm = (schema) => {
-        const f = document.createElement("ha-form");
-        f.schema = schema;
-        f.computeLabel = (s) => labelMap[s.name] || s.name;
-        f.computeHelper = (s) => helperMap[s.name];
-        f.addEventListener("value-changed", (e) => {
-          this._config = { ...this._config, ...e.detail.value };
-          this._emit();
-        });
-        return f;
-      };
-      this._formTop = mkForm([{ name: "title", selector: { text: {} } }, { name: "filter", selector: { text: {} } }]);
-      // hass BEFORE appending, so the form's first render already has it.
-      // (This did NOT fix the `localize` TypeError seen when the editor is
-      // instantiated bare on a dashboard page: that throw is inside HA's
-      // lazily-loaded ha-selector-label chunk, which ha-form pulls in while
-      // rendering. Unconfirmed in the real edit dialog — see CLAUDE.md.)
-      this._formTop.hass = this._hass;
-      this.appendChild(this._formTop);
-
-      const patLabel = document.createElement("div");
-      patLabel.textContent = "Entity patterns";
-      patLabel.style.cssText = "padding: 16px 0 8px; color: var(--primary-text-color);";
-      this.appendChild(patLabel);
-      this._patWrap = document.createElement("div");
-      this.appendChild(this._patWrap);
-
-      this._formRest = mkForm([
-        { name: "labels", selector: { label: { multiple: true } } },
-        { name: "areas", selector: { area: { multiple: true } } },
-        {
-          name: "secondary",
-          selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } },
-        },
-        {
-          name: "group_by",
-          selector: {
-            select: {
-              mode: "dropdown",
-              options: [
-                { value: "none", label: "No grouping" },
-                { value: "floor", label: "Floor" },
-                { value: "area", label: "Area" },
-                { value: "state", label: "State" },
-                { value: "domain", label: "Domain" },
-              ],
-            },
-          },
-        },
-        {
-          name: "density",
-          selector: {
-            select: {
-              mode: "dropdown",
-              options: [
-                { value: "comfortable", label: "Comfortable (two lines)" },
-                { value: "compact", label: "Compact (one line)" },
-              ],
-            },
-          },
-        },
-        {
-          name: "state_style",
-          selector: {
-            select: {
-              mode: "dropdown",
-              options: [
-                { value: "text", label: "Text" },
-                { value: "pill", label: "Pill" },
-              ],
-            },
-          },
-        },
-        { name: "secondary_template", selector: { text: { multiline: true } } },
-        { name: "buckets", selector: { text: {} } },
-        { name: "show_search", selector: { boolean: {} } },
-        { name: "show_group_selector", selector: { boolean: {} } },
-        {
-          name: "sort",
-          selector: {
-            select: {
-              mode: "dropdown",
-              options: [
-                { value: "name", label: "Name" },
-                { value: "state", label: "State" },
-                { value: "last_changed", label: "Last changed" },
-              ],
-            },
-          },
-        },
-        {
-          name: "sort_dir",
-          selector: {
-            select: {
-              mode: "dropdown",
-              options: [
-                { value: "asc", label: "Ascending" },
-                { value: "desc", label: "Descending" },
-              ],
-            },
-          },
-        },
-        { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
-        { name: "tap_action", selector: { ui_action: {} } },
-        { name: "diagnostics_button", selector: { boolean: {} } },
-      ]);
-      this._formRest.hass = this._hass;   // same ordering as _formTop
-      this.appendChild(this._formRest);
-    }
-    this._formTop.hass = this._hass;
-    this._formRest.hass = this._hass;
-    this._formTop.data = this._config;
-    this._formRest.data = this._config;
-    this._renderPatterns();
   }
 }
 
