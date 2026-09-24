@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -232,9 +232,11 @@ class SbEntityBrowser extends HTMLElement {
     return 4;
   }
 
-  // Since 0.12.0 this card knows nothing about the URL. To filter it from an
-  // SB Filter Select, wrap it in an SB Param Card and put that card's
-  // $parameter$ in `filter` — the same path every other card takes.
+  // This card knows nothing about the URL. To drive it from a dropdown, wrap
+  // it in an SB Param Card and put the parameter INSIDE a pattern: words in
+  // one pattern are ANDed, so "fp300 $q$" is the base word plus the chosen
+  // word, and an empty choice collapses back to the base. (A separate
+  // `filter` option existed in 0.12–0.13; it said the same thing twice.)
   connectedCallback() {
     // Keep "Nm ago" honest — those only change when something re-renders.
     // HA builds cards DETACHED and re-attaches them during layout — the
@@ -261,22 +263,10 @@ class SbEntityBrowser extends HTMLElement {
     this._dropTemplates();
   }
 
-  _filter() {
-    const v = this._config?.filter;
-    return v && String(v).trim() ? String(v).trim() : null;
-  }
-
-  // Two filter tiers: the card's own config (patterns/labels/areas) is the
-  // BASE — the card's identity, always applied. `filter` (normally an SB
-  // Param Card's $parameter$) and the search box are the OPTIONAL tier: they
-  // only narrow within the base. A card configured with pattern * has
-  // everything as its base, which recovers replace-like behavior when wanted.
-  _filterMatcher() {
-    return patternMatcher(this._filter());
-  }
-
+  // The card's config (patterns/labels/areas) is its identity; the search box
+  // is the only runtime narrowing on top of it.
   _matches() {
-    return matchInfo(this._hass, this._config, this._filterMatcher()).ids;
+    return matchInfo(this._hass, this._config, null).ids;
   }
 
   _signature() {
@@ -365,7 +355,7 @@ class SbEntityBrowser extends HTMLElement {
     this._sig = this._signature();
     const h = this._hass;
     const cfg = this._config;
-    const { ids, patCounts } = matchInfo(h, cfg, this._filterMatcher());
+    const { ids, patCounts } = matchInfo(h, cfg, null);
 
     const stateObjs = ids.map((id) => [id, h.states[id]]);
     const isBad = (st) => ["unavailable", "unknown"].includes(st.state);
@@ -635,7 +625,7 @@ class SbEntityBrowser extends HTMLElement {
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs${this._filter() ? ` · filter: “${esc(this._filter())}”` : ""} · v${VERSION}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
@@ -931,7 +921,7 @@ const EDITOR_STYLE = `
 `;
 
 const LABELS = {
-  title: "Title", filter: "Narrowing filter", labels: "Labels", areas: "Areas",
+  title: "Title", labels: "Labels", areas: "Areas",
   secondary: "Secondary info fields", sort: "Sort by", sort_dir: "Sort direction",
   secondary_template: "Jinja secondary line", buckets: "Numeric buckets", state_style: "State display",
   density: "Density", group_by: "Group by", show_search: "Show search box",
@@ -939,7 +929,6 @@ const LABELS = {
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
 };
 const HELPERS = {
-  filter: "Optional pattern applied WITHIN the patterns above. To drive it from a dropdown, wrap this card in an SB Param Card (Show a dropdown) and write its parameter here, e.g. $value$.",
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
@@ -1013,10 +1002,9 @@ class SbEntityBrowserEditor extends HTMLElement {
     const pats = (c.patterns || []).filter((p) => p && p.trim());
     const total = this._total();
     return [
-      ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
+      ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(p) ? `<span class="chip">from a Param Card</span>` : ""}`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
-      ["Narrowing filter", c.filter ? `<code>${esc(c.filter)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(c.filter) ? `<span class="chip">from a Param Card</span>` : ""}` : `<span class="off">none</span>`],
       ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
     ];
   }
@@ -1055,7 +1043,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       sec("matching", "Matching", this._summaryMatching()) +
       sec("display", "Display", this._summaryDisplay()) +
       sec("controls", "Controls", this._summaryControls()) +
-      `<div class="note">Patterns, labels and areas are the card's identity, always applied. The narrowing filter and the search box only narrow within them.</div>`;
+      `<div class="note">Patterns, labels and areas are the card's identity. Words in one pattern are ANDed — put an SB Param Card's <code>$name$</code> inside a pattern (“fp300 $q$”) to let a dropdown narrow it; the search box narrows on top.</div>`;
     this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
   }
 
@@ -1129,7 +1117,6 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._form = this._mkForm([
         { name: "labels", selector: { label: { multiple: true } } },
         { name: "areas", selector: { area: { multiple: true } } },
-        { name: "filter", selector: { text: {} } },
       ], (v) => this._set(v));
       body.appendChild(this._form);
     } else if (this._open === "display") {
@@ -1178,7 +1165,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       const n = this._count(input.value);
       count.textContent =
         n == null
-          ? "Matches ids and friendly names (any word order, case-insensitive, * wildcards) — or an entity’s exact state (“CR2450”)"
+          ? "Words match ids AND friendly names (any order, case-insensitive, * wildcards) — or an entity\u2019s exact state (“CR2450”). A $name$ from a wrapping SB Param Card works here too."
           : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
     });
   }

@@ -18,16 +18,15 @@ persisted per browser.
   category any entry matches; across categories every configured one must be
   satisfied — so patterns + an area means "these entities, in that area".
   Each pattern field in the editor shows its own live match count.
-- **Two filter tiers.** The card's own config (patterns, labels, areas) is
-  the **base** — its identity, always applied, never overridable. The
-  **optional** tier narrows within it: the on-card search box, and the
-  `filter` option. To drive `filter` from a dropdown, wrap this card in an
-  [SB Param Card](https://github.com/snadboy/sb-param-card) with *Show a
-  dropdown* on and write its parameter here (`filter: $value$`). Since 0.12.0
-  this card reads nothing from the URL itself — it is wrapped like any other
-  card.
-  Want replace-style behavior? Give a card the base pattern `*` — everything
-  is its universe, so the optional tier is the whole filter.
+- **Patterns are the card's identity, and words within a pattern are ANDed.**
+  "fp300 occupancy" matches entities whose id or name carries both words.
+  That is also how a dropdown narrows a browser: wrap it in an
+  [SB Param Card](https://github.com/snadboy/sb-param-card) and write its
+  parameter *inside* a pattern — `patterns: ["fp300 $q$"]` — so the base word
+  stays fixed, the chosen word is added, and an empty choice collapses back to
+  the base. (Areas and labels are pickers; drive those with the Param Card's
+  *apply to field* instead.) The on-card search box narrows on top of all of
+  it.
 - **State chips with counts** at the top of the card; tap to filter the list.
   Multi-select, `unavailable`/`unknown` always surface as their own chips.
   When the matched set is numeric (temperatures, batteries), the chips become

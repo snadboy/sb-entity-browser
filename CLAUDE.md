@@ -238,3 +238,17 @@ last keystroke is never lost. Verified headless (`eb_editor_test.js`,
 `eb_live_check.js`): standalone on Monitor → Home, and wrapped four deep
 (HA editor → Param Card's Wrapped-card dialog → this overview → Matching
 dialog), both `:modal`, inner Done leaves the outer open, no page errors.
+
+## v0.14.0 — `filter` removed (2026-09-24)
+
+User: "remove the narrowing field; use $name$ in Patterns instead." Correct,
+because words inside ONE pattern are ANDed: `patterns: ["fp300 $q$"]` is the
+base word plus the dropdown's word, and an empty value collapses to the
+base — the two-tier behaviour `filter` provided, with no extra field. Gone:
+`_filter`, `_filterMatcher`, the editor field, the overview row, the diag
+note; `matchInfo(..., null)`. Pattern chips in the overview flag a `$token$`
+as "from a Param Card". Areas/labels stay pickers — the Param Card's
+`apply` handles those. Wrapped browsers on Monitor were rewired from
+`filter: $x$` to `"base $x$"` patterns (`rewire_filter_to_pattern.py`);
+a Home-view card with `filter: hub` and no patterns became `patterns: [hub]`
+(equivalent).
