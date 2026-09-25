@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.3";
+const VERSION = "0.14.4";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -277,8 +277,9 @@ class SbEntityBrowser extends HTMLElement {
     if (this._labelNames || this._labelsPending || !this._hass?.callWS) return;
     this._labelsPending = true;
     this._hass.callWS({ type: "config/label_registry/list" }).then((list) => {
-      // trimmed: a label named " MTR …" (leading space, seen live) would otherwise sort ahead of everything
-      this._labelNames = Object.fromEntries((list || []).map((l) => [l.label_id, String(l.name || "").trim() || l.label_id]));
+      // Names are used AS IS: the user names labels " MTR …" with a leading
+      // space on purpose, so they sort ahead of everything. Do not trim.
+      this._labelNames = Object.fromEntries((list || []).map((l) => [l.label_id, l.name || l.label_id]));
       this._sig = null;
       this._render();
     }).catch(() => { this._labelsPending = false; });

@@ -278,3 +278,9 @@ sorted ahead of everything. An entity's labels = own + device's
 listed under EACH (rows become `[id, st, group]` in label mode), the
 header count stays unique entities (284, not 304 rows). Measured on demo
 ⑥'s browser: 15 groups, 3 BILRESA entities appear twice.
+
+## v0.14.4 — label names are NOT trimmed (2026-09-24)
+
+The leading space on the " MTR …" labels is INTENTIONAL (user: "It is
+intentional") — it makes them sort first. v0.14.3's trim undid that;
+names are now used verbatim for grouping.
