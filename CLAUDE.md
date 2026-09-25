@@ -302,3 +302,25 @@ knew more-info / history / navigate / url / perform-action; HA's
 `homeassistant.toggle` on the clicked entity; `assist` opens the voice
 dialog. Verified with an intercepted `callService` (no device touched):
 row click → `{homeassistant, toggle, {entity_id: <row>}}`.
+
+## v0.15.0 — icon_tap_action + toggle-all with verification (2026-09-24)
+
+User asked (1) how we know toggle applies to an entity → `canToggle()`
+reads `hass.services[<domain>].toggle` (live registry; `stated` shows up
+because ha-stated registers one — it has no entities, harmless) and
+rejects unavailable/unknown; (2) can the single-row toggle be limited to
+the icon → `icon_tap_action` (HA tile-card idea): the row keeps
+`tap_action`, the icon runs its own action, and a toggle arms only where
+`canToggle` — class `iact` gives the pointer + hover ring; the click
+handler tests `e.composedPath()` for `.icon` (the placeholder span and the
+later ha-state-icon both carry it). `toggle_all_button`: acts on
+`shownIds` (post-filter, post-cap, unique), confirmation dialog on
+**document.body** (the shadow root is rebuilt every render and the toggles
+themselves cause renders), one `homeassistant.toggle` with the id list,
+3 s, then compares each state to `before` and lists the unchanged.
+
+**INCIDENT while testing:** the headless intercept replaced `b._hass`,
+HA's hass setter put the real one back within a tick, and the test's
+clicks REALLY toggled the six Nest-hub outlets (off 36 s, restored). See
+memory `feedback_card_test_intercept_hass_setter`. The re-run wraps the
+hass SETTER and proves `last_changed` untouched afterwards.

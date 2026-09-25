@@ -77,7 +77,9 @@ All options are in the visual editor. For reference:
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
 | `list_rows` | Hard on-screen limit (3–50, default 10): the list shows this many rows and scrolls for the rest |
-| `tap_action` | Standard HA action |
+| `tap_action` | Standard HA action for the row (more-info, toggle, navigate, url, perform-action, assist, none) |
+| `icon_tap_action` | A separate action for the row's **icon**; the rest of the row keeps `tap_action`. A `toggle` only arms (pointer, hover ring) on rows whose domain registers a `toggle` service on your HA and whose state is known — elsewhere the icon click falls through to the row |
+| `toggle_all_button` | Header button: toggles every toggleable row **currently on screen** (filters, chips, search all apply) after a confirmation that states how many go on → off and off → on and how many are skipped; then verifies each entity's state changed and names any that did not |
 | `diagnostics_button` | Show the F12-style toggle |
 | `storage_id` | Key for the per-browser filter persistence (auto-generated) |
 

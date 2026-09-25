@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.6";
+const VERSION = "0.15.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -22,6 +22,18 @@ const SECONDARY_OPTIONS = [
 
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+
+// Toggleable = the entity's domain registers a `toggle` service on THIS HA
+// (read from hass.services, not a hard-coded list — a custom integration
+// that adds toggle counts, a domain that drops it stops counting) and the
+// entity is not unavailable/unknown.
+const canToggle = (hass, id) => {
+  const st = hass?.states?.[id];
+  if (!st || st.state === "unavailable" || st.state === "unknown") return false;
+  return !!hass.services?.[id.split(".")[0]]?.toggle;
+};
+// "Currently on" for the toggle-all summary: anything not in a resting state.
+const OFFISH = new Set(["off", "closed", "idle", "standby", "paused", "docked", "unavailable", "unknown"]);
 
 // Implied leading/trailing wildcards: "battery" matches *battery*.
 const globToRegex = (glob, flags) =>
@@ -347,8 +359,17 @@ class SbEntityBrowser extends HTMLElement {
     return parts.join(" · ");
   }
 
-  _handleTap(id) {
-    const a = this._config.tap_action || { action: "more-info" };
+  // The icon's own action: only when configured, and a toggle only on a row
+  // whose entity can actually be toggled — elsewhere the icon is inert and
+  // the click falls through to the row.
+  _iconAction(id) {
+    const a = this._config.icon_tap_action;
+    if (!a || !a.action || a.action === "none") return null;
+    if (a.action === "toggle" && !canToggle(this._hass, id)) return null;
+    return a;
+  }
+
+  _handleTap(id, a = this._config.tap_action || { action: "more-info" }) {
     const act = a.action || "more-info";
     if (act === "none") return;
     if (act === "more-info") fire(this, "hass-more-info", { entityId: id });
@@ -501,6 +522,10 @@ class SbEntityBrowser extends HTMLElement {
     const shown = groupBy === "label" ? new Set(rows.map((r) => r[0])).size : rows.length;   // label mode lists an entity once per label
     const capped = rows.length > renderCap && !this._diag;
     if (capped) rows = rows.slice(0, renderCap);
+    // Toggle-all acts on exactly what is on screen: filters, chips, search
+    // and the cap all apply. Label mode lists an entity once per label.
+    const shownIds = [...new Set(rows.map((r) => r[0]))];
+    const togglable = shownIds.filter((id) => canToggle(h, id));
     // Absolute ceiling on top of the row cap: the list never exceeds 70% of
     // the viewport, whatever list_rows and row heights add up to.
     const scrolls = rows.length > listRows;
@@ -545,8 +570,9 @@ class SbEntityBrowser extends HTMLElement {
       const bad = isBad(st);
       const act = !bad && ACTIVE.has(st.state);
       const sec = compact ? "" : this._secondaryText(id, st);
+      const iact = !!this._iconAction(id);
       return `
-        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
+        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
           <span class="icon ph"></span>
           <div class="body">
             <div class="name">${esc(name(id, st))}</div>
@@ -592,6 +618,12 @@ class SbEntityBrowser extends HTMLElement {
         .count { color: var(--secondary-text-color); font-size: .85em; }
         .diag-btn, .fold-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
         .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
+        .tall-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 22px; padding: 3px; border-radius: 50%; }
+        .tall-btn:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .08); }
+        .tall-btn.dim { opacity: .35; cursor: default; }
+        /* an armed icon is its own control: pointer + a ring on hover */
+        .row.iact .icon { cursor: pointer; border-radius: 50%; padding: 4px; margin: -4px; }
+        .row.iact .icon:hover { background: rgba(var(--rgb-primary-color, 33,150,243), .15); }
         .gsel { font-size: .8em; color: var(--secondary-text-color); background: var(--card-background-color, transparent);
                 border: 1px solid var(--divider-color); border-radius: 12px; padding: 2px 6px; cursor: pointer;
                 outline-color: var(--primary-color); color-scheme: light dark; }
@@ -661,6 +693,9 @@ class SbEntityBrowser extends HTMLElement {
             ? `<ha-icon class="fold-btn" data-fold="collapse" icon="mdi:unfold-less-horizontal" title="Collapse all"></ha-icon>
                <ha-icon class="fold-btn" data-fold="expand" icon="mdi:unfold-more-horizontal" title="Expand all"></ha-icon>`
             : ""}
+          ${cfg.toggle_all_button
+            ? `<ha-icon class="tall-btn ${togglable.length ? "" : "dim"}" icon="mdi:toggle-switch-outline" title="Toggle all shown (${togglable.length} of ${shownIds.length})"></ha-icon>`
+            : ""}
           ${cfg.diagnostics_button
             ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
             : ""}
@@ -692,7 +727,12 @@ class SbEntityBrowser extends HTMLElement {
     // rows on screen, by _reconcileIcons below.
     this.shadowRoot.querySelectorAll(".row").forEach((el) => {
       const id = el.dataset.entity;
-      el.addEventListener("click", () => this._handleTap(id));
+      el.addEventListener("click", (e) => {
+        const ia = this._iconAction(id);
+        // the placeholder span is swapped for an ha-state-icon later; both carry .icon
+        if (ia && e.composedPath().some((n) => n.classList && n.classList.contains("icon"))) { e.stopPropagation(); this._handleTap(id, ia); return; }
+        this._handleTap(id);
+      });
       el.addEventListener("keydown", (e) => e.key === "Enter" && this._handleTap(id));
     });
     const clearAll = this.shadowRoot.querySelector(".clear-all");
@@ -747,6 +787,8 @@ class SbEntityBrowser extends HTMLElement {
         rerender();
       });
     });
+    const tallBtn = this.shadowRoot.querySelector(".tall-btn");
+    if (tallBtn) tallBtn.addEventListener("click", () => this._toggleAll(togglable, shownIds.length));
     const diagBtn = this.shadowRoot.querySelector(".diag-btn");
     if (diagBtn)
       diagBtn.addEventListener("click", () => {
@@ -817,6 +859,68 @@ class SbEntityBrowser extends HTMLElement {
     this._iconSweep = setInterval(reconcile, 5000);
     reconcile();
     requestAnimationFrame(reconcile);   // once layout has happened
+  }
+
+  // Toggle every toggleable row on screen, behind a confirmation that says
+  // how many and which way, then VERIFY: after the service call, compare
+  // each entity's state with what it was and name the ones that did not
+  // change. The dialog lives on document.body — the card's shadow root is
+  // rebuilt on every render, and the toggles themselves trigger renders.
+  _toggleAll(ids, shown) {
+    const h = this._hass;
+    document.querySelectorAll("dialog.seb-tall").forEach((d) => d.remove());
+    const d = document.createElement("dialog");
+    d.className = "seb-tall";
+    d.innerHTML = `<style>
+      dialog.seb-tall { background: var(--card-background-color, #fff); color: var(--primary-text-color); border: none; border-radius: 12px;
+        padding: 20px 24px; min-width: 300px; max-width: 460px; box-shadow: 0 8px 32px rgba(0,0,0,.35); font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
+      dialog.seb-tall::backdrop { background: rgba(0,0,0,.45); }
+      dialog.seb-tall h3 { margin: 0 0 10px; font-size: 1.15em; font-weight: 500; }
+      dialog.seb-tall p { margin: 6px 0; line-height: 1.45; color: var(--secondary-text-color); }
+      dialog.seb-tall p b { color: var(--primary-text-color); }
+      dialog.seb-tall ul { margin: 6px 0 0 18px; padding: 0; color: var(--primary-text-color); font-size: .92em; }
+      dialog.seb-tall .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+      dialog.seb-tall button { border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font: inherit; }
+      dialog.seb-tall button.ok { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      dialog.seb-tall button.cancel, dialog.seb-tall button.close { background: rgba(127,127,127,.15); color: var(--primary-text-color); }
+      dialog.seb-tall .warn { color: var(--warning-color, orange); }
+      dialog.seb-tall .good { color: var(--success-color, #43a047); }
+    </style><div class="body"></div>`;
+    const body = d.querySelector(".body");
+    const nameOf = (id) => h.states[id]?.attributes?.friendly_name || id;
+    const close = () => { d.close(); };
+    d.addEventListener("close", () => d.remove());
+    if (!ids.length) {
+      body.innerHTML = `<h3>Nothing to toggle</h3><p>None of the <b>${shown}</b> shown entities has a toggle service (or they are unavailable).</p>
+        <div class="btns"><button class="close">Close</button></div>`;
+      body.querySelector(".close").addEventListener("click", close);
+    } else {
+      const before = Object.fromEntries(ids.map((id) => [id, h.states[id]?.state]));
+      const onN = ids.filter((id) => !OFFISH.has(before[id])).length;
+      const skipped = shown - ids.length;
+      body.innerHTML = `<h3>Toggle all shown?</h3>
+        <p><b>${ids.length}</b> of the ${shown} shown will be toggled: <b>${onN}</b> currently on → off, <b>${ids.length - onN}</b> off → on.${
+          skipped ? ` <span class="warn">${skipped} skipped</span> — no toggle service or unavailable.` : ""}</p>
+        <div class="btns"><button class="cancel">Cancel</button><button class="ok">Toggle ${ids.length}</button></div>`;
+      body.querySelector(".cancel").addEventListener("click", close);
+      body.querySelector(".ok").addEventListener("click", async () => {
+        body.innerHTML = `<h3>Toggling…</h3><p>Sent <b>${ids.length}</b> toggles; verifying states.</p>`;
+        let err = null;
+        try { await h.callService("homeassistant", "toggle", {}, { entity_id: ids }); } catch (e) { err = String(e?.message || e); }
+        await new Promise((r) => setTimeout(r, 3000));           // let the state changes arrive
+        const now = this._hass?.states || {};
+        const unchanged = ids.filter((id) => now[id]?.state === before[id]);
+        const changed = ids.length - unchanged.length;
+        body.innerHTML = `<h3>${err ? "Toggle failed" : "Verified"}</h3>
+          ${err ? `<p class="warn">${esc(err)}</p>` : ""}
+          <p><b class="${changed === ids.length ? "good" : ""}">${changed}</b> of ${ids.length} changed state${unchanged.length ? `, <b class="warn">${unchanged.length}</b> did not:` : "."}</p>
+          ${unchanged.length ? `<ul>${unchanged.slice(0, 12).map((id) => `<li>${esc(nameOf(id))} <span style="opacity:.6">(still ${esc(String(now[id]?.state))})</span></li>`).join("")}${unchanged.length > 12 ? `<li>… and ${unchanged.length - 12} more</li>` : ""}</ul>` : ""}
+          <div class="btns"><button class="close">Close</button></div>`;
+        body.querySelector(".close").addEventListener("click", close);
+      });
+    }
+    document.body.appendChild(d);
+    d.showModal();
   }
 
   _reconcileIcons(rootEl) {
@@ -970,6 +1074,7 @@ const LABELS = {
   density: "Density", group_by: "Group by", show_search: "Show search box",
   show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
+  icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
@@ -977,6 +1082,8 @@ const HELPERS = {
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
   tap_action: "Perform-action with an empty target acts on the clicked entity.",
+  icon_tap_action: "A separate action for the row's icon; the rest of the row keeps Tap action. A toggle only arms on entities whose domain has a toggle service.",
+  toggle_all_button: "Header button that toggles every toggleable row on screen, after a confirmation, then verifies each state changed.",
   secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
   buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 → chips <20 · 20–50 · >50. Empty = min/max inputs.",
   show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
@@ -1075,6 +1182,8 @@ class SbEntityBrowserEditor extends HTMLElement {
       ["Group-by selector", on(c.show_group_selector)],
       ["Diagnostics button", on(c.diagnostics_button)],
       ["Tap action", esc((a.action || "more-info").replace(/[-_]/g, " ")) + (a.navigation_path ? ` <code>${esc(a.navigation_path)}</code>` : "") + (a.perform_action || a.service ? ` <code>${esc(a.perform_action || a.service)}</code>` : "")],
+      ["Icon tap action", c.icon_tap_action?.action && c.icon_tap_action.action !== "none" ? esc(c.icon_tap_action.action.replace(/[-_]/g, " ")) : `<span class="off">same as row</span>`],
+      ["Toggle-all button", on(c.toggle_all_button)],
     ];
   }
 
@@ -1178,6 +1287,8 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "show_group_selector", selector: { boolean: {} } },
         { name: "diagnostics_button", selector: { boolean: {} } },
         { name: "tap_action", selector: { ui_action: {} } },
+        { name: "icon_tap_action", selector: { ui_action: {} } },
+        { name: "toggle_all_button", selector: { boolean: {} } },
       ], (v) => this._set(v, true));
       body.appendChild(this._form);
     }
