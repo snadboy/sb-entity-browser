@@ -293,3 +293,12 @@ intersected with the filter: the six Matter-hub entities carry six other
 MTR labels between them and no longer spawn those groups. Areas need no
 change — an entity has one area and the area filter already implies it.
 Measured on the Home card: hub → 1 group/6, relay → 1/4, both → 2/10.
+
+## v0.14.6 — tap_action: toggle (and assist) (2026-09-24)
+
+User: "Tap action of More Info works but not Toggle". `_handleTap` only
+knew more-info / history / navigate / url / perform-action; HA's
+`ui_action` selector also offers toggle, assist, none. `toggle` →
+`homeassistant.toggle` on the clicked entity; `assist` opens the voice
+dialog. Verified with an intercepted `callService` (no device touched):
+row click → `{homeassistant, toggle, {entity_id: <row>}}`.

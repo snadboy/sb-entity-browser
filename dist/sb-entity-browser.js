@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.5";
+const VERSION = "0.14.6";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -352,6 +352,8 @@ class SbEntityBrowser extends HTMLElement {
     const act = a.action || "more-info";
     if (act === "none") return;
     if (act === "more-info") fire(this, "hass-more-info", { entityId: id });
+    else if (act === "toggle") this._hass.callService("homeassistant", "toggle", {}, { entity_id: id });
+    else if (act === "assist") fire(this, "show-dialog", { dialogTag: "ha-voice-command-dialog", dialogImport: () => import("/frontend_latest/ha-voice-command-dialog.js").catch(() => {}), dialogParams: {} });
     else if (act === "history") {
       history.pushState(null, "", `/history?entity_id=${id}`);
       fire(this, "location-changed", {});
