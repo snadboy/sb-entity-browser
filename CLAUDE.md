@@ -284,3 +284,12 @@ header count stays unique entities (284, not 304 rows). Measured on demo
 The leading space on the " MTR …" labels is INTENTIONAL (user: "It is
 intentional") — it makes them sort first. v0.14.3's trim undid that;
 names are now used verbatim for grouping.
+
+## v0.14.5 — label groups honour the label filter (2026-09-24)
+
+User: "should only group by the areas/labels that were included in the
+filter". In label mode, when `labels` is set, an entity's group labels are
+intersected with the filter: the six Matter-hub entities carry six other
+MTR labels between them and no longer spawn those groups. Areas need no
+change — an entity has one area and the area filter already implies it.
+Measured on the Home card: hub → 1 group/6, relay → 1/4, both → 2/10.

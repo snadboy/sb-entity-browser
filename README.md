@@ -68,7 +68,7 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `secondary_template` | Jinja secondary line, rendered live only for rows **on screen** (IntersectionObserver; subscriptions attach on scroll-in, release on scroll-out, hard cap 60) |
-| `group_by` | `none`, `floor`, `area`, `state`, `domain`, or `label` (an entity with several labels, its own or its device's, is listed under each) — collapsible section headers with per-card collapse/expand-all buttons |
+| `group_by` | `none`, `floor`, `area`, `state`, `domain`, or `label` (an entity with several labels, its own or its device's, is listed under each; when the card is filtered by `labels`, only those labels form groups) — collapsible section headers with per-card collapse/expand-all buttons |
 | `density` | `comfortable` (two lines) or `compact` (one line) |
 | `state_style` | `text` or `pill` (tinted badge; active states accent-colored, unavailable red) |
 | `buckets` | Comma-separated thresholds for numeric sets (`20, 50` → chips `<20 · 20–50 · >50`) |

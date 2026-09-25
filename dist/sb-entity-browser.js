@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.14.4";
+const VERSION = "0.14.5";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -453,8 +453,12 @@ class SbEntityBrowser extends HTMLElement {
       // listed under EACH of them, so a label group is complete on its own.
       // Row = [id, state, group] from here on; a label-less entity gets one.
       const names = this._labelNames || {};
+      // Filtered by labels? Then only THOSE labels form groups: an entity that
+      // matched on "Matter Hub" is not also listed under its "Button" label.
+      const want = (Array.isArray(cfg.labels) ? cfg.labels : cfg.labels ? [cfg.labels] : []).filter((v) => v && !String(v).startsWith("___"));
       rows = rows.flatMap(([id, st]) => {
-        const ls = entityLabelIds(h, id);
+        const all = entityLabelIds(h, id);
+        const ls = want.length ? all.filter((l) => want.includes(l)) : all;
         return ls.length ? ls.map((l) => [id, st, names[l] || l]) : [[id, st, "No label"]];
       });
     }
