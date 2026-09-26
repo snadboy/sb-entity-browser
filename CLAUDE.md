@@ -350,3 +350,15 @@ number of values and ranges sit in one ORed list, so one knob can offer
 range. Verified vs API truth on `sensor.*battery` (237): <20|>=80 = 68,
 +unavailable = 87, 2-3 = 11 (= 2..3), >100 = 4, >=100 = 49, shorthand
 ≤30 + list ≥95 = 67; plain values unchanged (occupancy off 13).
+
+## v0.17.0 — device_classes / units filters + Monitor "State Match" view (2026-09-26)
+
+The examples run showed `sensor.*battery` + `<20` sweeping in FP300
+battery VOLTAGE sensors (2.98 V): a range knows no units. `device_classes`
+and `units` are AND filters beside labels/areas (comma lists, `$p$`-able),
+in the Matching dialog's State match sub-form and the overview. Verified
+vs API truth: battery <20 = 18 → 2 with class or unit; temperature °F >75
+= 7/7; class-only config (no pattern) = 103/103. (A test-harness slip —
+`run()` not resetting `units` — first showed 0 for that; the direct probe
+settled it.) Dashboard: new Monitor view `state-match` with the example
+browsers.

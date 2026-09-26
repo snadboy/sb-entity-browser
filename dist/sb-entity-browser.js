@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.16.1";
+const VERSION = "0.17.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -132,6 +132,10 @@ const matchInfo = (hass, config, extra) => {
   const patCounts = new Array(matchers.length).fill(0);
   const ids = [];
   const stateOk = stateMatcher(hass, config);
+  // device_class / unit: AND filters like labels/areas. A range on a
+  // battery pattern otherwise sweeps in battery VOLTAGE sensors (2.98 V < 20).
+  const classes = stateList(config.device_classes).map((s) => s.toLowerCase());
+  const units = stateList(config.units);
   for (const id of Object.keys(hass.states)) {
     const st = hass.states[id];
     const name = st.attributes.friendly_name;
@@ -152,6 +156,8 @@ const matchInfo = (hass, config, extra) => {
       if (!entityLabelIds(hass, id).some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
+    if (classes.length && !classes.includes(String(st.attributes.device_class || "").toLowerCase())) continue;
+    if (units.length && !units.includes(String(st.attributes.unit_of_measurement ?? ""))) continue;
     if (stateOk && !stateOk(st)) continue;
     if (extra && !extra(id, name, st.state, fmt)) continue;
     ids.push(id);
@@ -228,7 +234,8 @@ class SbEntityBrowser extends HTMLElement {
     // wrapped browser starts with empty labels/areas until a choice is made,
     // and an HA error card there reads as broken. Render an empty state and
     // match nothing (never the whole estate).
-    this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length && !stateMatcher({}, config);
+    this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length && !stateMatcher({}, config)
+      && !stateList(config.device_classes).length && !stateList(config.units).length;
     this._config = {
       secondary: ["state"],
       tap_action: { action: "more-info" },
@@ -1116,11 +1123,14 @@ const LABELS = {
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
   states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
+  device_classes: "Device classes", units: "Units",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
   states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
+  device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
+  units: "Comma-separated units of measurement, e.g. %, °F, W — exact match. Keeps a numeric range from sweeping in the wrong quantity.",
   state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
@@ -1199,6 +1209,8 @@ class SbEntityBrowserEditor extends HTMLElement {
       ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(p) ? `<span class="chip">from a Param Card</span>` : ""}`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
+      ...(stateList(c.device_classes).length ? [["Device class", stateList(c.device_classes).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
+      ...(stateList(c.units).length ? [["Unit", stateList(c.units).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
       ...(stateMatcher({}, c) ? [["State", [
         ...stateList(c.states).map((s) => `<code>${esc(s)}</code>${parseRange(s) ? `<span class="chip">range</span>` : ""}`),
         numOrNull(c.state_min) != null || numOrNull(c.state_max) != null ? `<code>${numOrNull(c.state_min) ?? "…"} – ${numOrNull(c.state_max) ?? "…"}</code><span class="chip">range</span>` : "",
@@ -1321,6 +1333,8 @@ class SbEntityBrowserEditor extends HTMLElement {
       body.appendChild(this._form);
       const sub2 = document.createElement("div"); sub2.className = "sub"; sub2.textContent = "State match"; body.appendChild(sub2);
       this._form2 = this._mkForm([
+        { name: "device_classes", selector: { text: {} } },
+        { name: "units", selector: { text: {} } },
         { name: "states", selector: { text: {} } },
         { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
         { name: "state_max", selector: { number: { mode: "box", step: "any" } } },

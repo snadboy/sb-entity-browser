@@ -68,6 +68,8 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `states` | Final filter on the **state**: a list (or comma string) of values and/or numeric ranges, ORed — `[on, Detected, unavailable, "<20", ">=80", "40-60"]`. Values match the raw or formatted state, case-insensitively. Ranges: `<n`, `<=n`, `>n`, `>=n`, `a-b` / `a..b` (inclusive); only a numeric state can satisfy one. A Param Card's `$p$` works here, so a knob can offer "Low (<20)" |
 | `state_min` / `state_max` | Shorthand for one more inclusive range, either side open |
+| `device_classes` | Entities must carry one of these device classes (`battery, temperature`) — ANDed with the rest |
+| `units` | Entities must have one of these units of measurement (`%`, `°F`, `W`), exact match. Keeps a numeric range from sweeping in the wrong quantity — `sensor.*battery` with `<20` otherwise includes battery *voltage* sensors at 2.98 V |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `secondary_template` | Jinja secondary line, rendered live only for rows **on screen** (IntersectionObserver; subscriptions attach on scroll-in, release on scroll-out, hard cap 60) |
 | `group_by` | `none`, `floor`, `area`, `state`, `domain`, or `label` (an entity with several labels, its own or its device's, is listed under each; when the card is filtered by `labels`, only those labels form groups) — collapsible section headers with per-card collapse/expand-all buttons |
