@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.16.0";
+const VERSION = "0.16.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -87,19 +87,34 @@ const entityAreaId = (hass, id) => {
 // only a numeric state can satisfy it. An entity passes when it matches a
 // value OR falls in the range — "unavailable, or below 20 %".
 const stateList = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : String(v).split(","))
-  .map((s) => String(s ?? "").trim().toLowerCase()).filter(Boolean);
+  .map((s) => String(s ?? "").trim()).filter(Boolean);
 const numOrNull = (v) => { if (v == null || v === "") return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+// A `states` entry is either a plain value or a numeric range expression:
+//   <20  <=20  >80  >=80  20-50  20..50   (spans inclusive; negatives allowed)
+// Any number of ranges and values sit in one list, ORed — so one Param Card
+// knob can offer "Low (<20)" / "Full (>=95)" / "Unavailable".
+const RANGE_RX = /^(?:(<=|<|>=|>)\s*(-?\d+(?:\.\d+)?)|(-?\d+(?:\.\d+)?)\s*(?:\.\.|-)\s*(-?\d+(?:\.\d+)?))$/;
+const parseRange = (s) => {
+  const m = RANGE_RX.exec(String(s).trim());
+  if (!m) return null;
+  if (m[3] != null) { const a = parseFloat(m[3]), b = parseFloat(m[4]); return { lo: Math.min(a, b), hi: Math.max(a, b), loX: false, hiX: false }; }
+  const n = parseFloat(m[2]);
+  return { "<": { hi: n, hiX: true }, "<=": { hi: n, hiX: false }, ">": { lo: n, loX: true }, ">=": { lo: n, loX: false } }[m[1]];
+};
+const inRange = (n, r) => (r.lo == null || (r.loX ? n > r.lo : n >= r.lo)) && (r.hi == null || (r.hiX ? n < r.hi : n <= r.hi));
 const stateMatcher = (hass, config) => {
-  const want = stateList(config.states);
-  const lo = numOrNull(config.state_min), hi = numOrNull(config.state_max);
-  if (!want.length && lo == null && hi == null) return null;
+  const ranges = [], want = [];
+  for (const s of stateList(config.states)) { const r = parseRange(s); if (r) ranges.push(r); else want.push(s.toLowerCase()); }
+  const lo = numOrNull(config.state_min), hi = numOrNull(config.state_max);   // shorthand for one more range
+  if (lo != null || hi != null) ranges.push({ lo, hi, loX: false, hiX: false });
+  if (!want.length && !ranges.length) return null;
   return (st) => {
     const raw = String(st.state);
     if (want.length && (want.includes(raw.toLowerCase()) || want.includes(String(fmtState(hass, st)).toLowerCase()))) return true;
-    if (lo == null && hi == null) return false;
+    if (!ranges.length) return false;
     const n = parseFloat(raw);
     if (isNaN(n) || !isFinite(raw)) return false;
-    return (lo == null || n >= lo) && (hi == null || n <= hi);
+    return ranges.some((r) => inRange(n, r));
   };
 };
 
@@ -1105,8 +1120,8 @@ const LABELS = {
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
-  states: "Comma-separated raw or formatted states (on, Detected, unavailable). An entity passes with a matching value OR a numeric state inside the range below. A Param Card's $p$ works here.",
-  state_min: "Inclusive; only numeric states can satisfy a range. Leave both empty for no range.",
+  states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
+  state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
   tap_action: "Perform-action with an empty target acts on the clicked entity.",
@@ -1185,8 +1200,8 @@ class SbEntityBrowserEditor extends HTMLElement {
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
       ...(stateMatcher({}, c) ? [["State", [
-        stateList(c.states).length ? stateList(c.states).map((s) => `<code>${esc(s)}</code>`).join(" ") : "",
-        numOrNull(c.state_min) != null || numOrNull(c.state_max) != null ? `<code>${numOrNull(c.state_min) ?? "…"} – ${numOrNull(c.state_max) ?? "…"}</code>` : "",
+        ...stateList(c.states).map((s) => `<code>${esc(s)}</code>${parseRange(s) ? `<span class="chip">range</span>` : ""}`),
+        numOrNull(c.state_min) != null || numOrNull(c.state_max) != null ? `<code>${numOrNull(c.state_min) ?? "…"} – ${numOrNull(c.state_max) ?? "…"}</code><span class="chip">range</span>` : "",
       ].filter(Boolean).join(" <span class=\"chip\">OR</span> ") + ` <span class="chip">AND</span>`]] : []),
       ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
     ];

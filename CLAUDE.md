@@ -340,3 +340,13 @@ Verified against API truth: occupancy off 13/13, formatted "Clear" 13,
 battery ≤30 = 16/16, 20–50 = 2/2, "≤30 or unavailable" = 35/35 (the card's
 implied wildcards make `sensor.*battery` include `binary_sensor.*` — my
 first truth count missed that, the card was right).
+
+## v0.16.1 — several ranges (2026-09-25)
+
+User: "only allowing a single range?". A `states` entry may now be a
+range expression (`<20 <=20 >80 >=80 20-50 20..50`, `parseRange`); any
+number of values and ranges sit in one ORed list, so one knob can offer
+"Low (<20)". `state_min`/`state_max` stay as shorthand for one more
+range. Verified vs API truth on `sensor.*battery` (237): <20|>=80 = 68,
++unavailable = 87, 2-3 = 11 (= 2..3), >100 = 4, >=100 = 49, shorthand
+≤30 + list ≥95 = 67; plain values unchanged (occupancy off 13).
