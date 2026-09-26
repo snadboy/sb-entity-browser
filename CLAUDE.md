@@ -324,3 +324,19 @@ HA's hass setter put the real one back within a tick, and the test's
 clicks REALLY toggled the six Nest-hub outlets (off 36 s, restored). See
 memory `feedback_card_test_intercept_hass_setter`. The re-run wraps the
 hass SETTER and proves `last_changed` untouched afterwards.
+
+## v0.16.0 — config-level state match (2026-09-25)
+
+User: "adding state value match (value in list or in range for numerics)
+as a final filter". Three flat keys so a Param Card `$p$` substitutes into
+them: `states` (list or comma string; raw OR formatted, case-insensitive),
+`state_min` / `state_max` (inclusive, either side open, numeric states
+only). `stateMatcher()` runs inside `matchInfo` after labels/areas, so the
+count, chips, grouping and toggle-all all see the reduced set; a value
+match OR a range hit passes (the "unavailable, or below 20 %" case). A
+state filter alone counts as configured. Editor: "State match" sub-form
+in Matching (`_form2`, hass-wired), overview row "State … OR … AND".
+Verified against API truth: occupancy off 13/13, formatted "Clear" 13,
+battery ≤30 = 16/16, 20–50 = 2/2, "≤30 or unavailable" = 35/35 (the card's
+implied wildcards make `sensor.*battery` include `binary_sensor.*` — my
+first truth count missed that, the card was right).

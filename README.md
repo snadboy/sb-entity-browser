@@ -66,6 +66,8 @@ All options are in the visual editor. For reference:
 | `patterns` | Entity-id substring globs, implied `*…*` |
 | `labels` | Entities must also carry one of these labels |
 | `areas` | Entities must also be in one of these areas |
+| `states` | Final filter on the **state**: a list (or comma string) of raw or formatted values, case-insensitive — `[on, Detected, unavailable]` |
+| `state_min` / `state_max` | Inclusive numeric range; either side may be left open. Only a numeric state can satisfy it. An entity passes the state filter with a matching value **or** a number in the range, so `states: unavailable` + `state_max: 20` reads "unavailable, or under 20". A Param Card's `$p$` works in any of the three |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `secondary_template` | Jinja secondary line, rendered live only for rows **on screen** (IntersectionObserver; subscriptions attach on scroll-in, release on scroll-out, hard cap 60) |
 | `group_by` | `none`, `floor`, `area`, `state`, `domain`, or `label` (an entity with several labels, its own or its device's, is listed under each; when the card is filtered by `labels`, only those labels form groups) — collapsible section headers with per-card collapse/expand-all buttons |

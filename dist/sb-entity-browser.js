@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -80,6 +80,29 @@ const entityAreaId = (hass, id) => {
 // Matching semantics: within a category any entry matches (OR); across the
 // categories that are configured — patterns ∧ labels ∧ areas — ALL must be
 // satisfied. An empty category doesn't constrain.
+// State match (config-level, part of the card's identity — unlike the
+// viewer's chips). `states`: a list (or comma string, e.g. from a Param
+// Card's $p$) of raw OR formatted state values, case-insensitive.
+// `state_min` / `state_max`: an inclusive numeric range, either side open;
+// only a numeric state can satisfy it. An entity passes when it matches a
+// value OR falls in the range — "unavailable, or below 20 %".
+const stateList = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : String(v).split(","))
+  .map((s) => String(s ?? "").trim().toLowerCase()).filter(Boolean);
+const numOrNull = (v) => { if (v == null || v === "") return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+const stateMatcher = (hass, config) => {
+  const want = stateList(config.states);
+  const lo = numOrNull(config.state_min), hi = numOrNull(config.state_max);
+  if (!want.length && lo == null && hi == null) return null;
+  return (st) => {
+    const raw = String(st.state);
+    if (want.length && (want.includes(raw.toLowerCase()) || want.includes(String(fmtState(hass, st)).toLowerCase()))) return true;
+    if (lo == null && hi == null) return false;
+    const n = parseFloat(raw);
+    if (isNaN(n) || !isFinite(raw)) return false;
+    return (lo == null || n >= lo) && (hi == null || n <= hi);
+  };
+};
+
 const matchInfo = (hass, config, extra) => {
   // Index-aligned with config.patterns. A blank entry is IGNORED (it never
   // excludes anything); with no active pattern at all, patterns don't
@@ -93,6 +116,7 @@ const matchInfo = (hass, config, extra) => {
   const areas = clean(config.areas);
   const patCounts = new Array(matchers.length).fill(0);
   const ids = [];
+  const stateOk = stateMatcher(hass, config);
   for (const id of Object.keys(hass.states)) {
     const st = hass.states[id];
     const name = st.attributes.friendly_name;
@@ -113,6 +137,7 @@ const matchInfo = (hass, config, extra) => {
       if (!entityLabelIds(hass, id).some((l) => labels.includes(l))) continue;
     }
     if (areas.length && !areas.includes(entityAreaId(hass, id))) continue;
+    if (stateOk && !stateOk(st)) continue;
     if (extra && !extra(id, name, st.state, fmt)) continue;
     ids.push(id);
   }
@@ -188,7 +213,7 @@ class SbEntityBrowser extends HTMLElement {
     // wrapped browser starts with empty labels/areas until a choice is made,
     // and an HA error card there reads as broken. Render an empty state and
     // match nothing (never the whole estate).
-    this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length;
+    this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length && !stateMatcher({}, config);
     this._config = {
       secondary: ["state"],
       tap_action: { action: "more-info" },
@@ -1075,10 +1100,13 @@ const LABELS = {
   show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
+  states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
+  states: "Comma-separated raw or formatted states (on, Detected, unavailable). An entity passes with a matching value OR a numeric state inside the range below. A Param Card's $p$ works here.",
+  state_min: "Inclusive; only numeric states can satisfy a range. Leave both empty for no range.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
   tap_action: "Perform-action with an empty target acts on the clicked entity.",
@@ -1111,6 +1139,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (this._form) this._form.hass = hass;
+    if (this._form2) this._form2.hass = hass;
     // hass ticks are frequent; the counts don't need sub-second freshness.
     const now = Date.now();
     if (now - (this._lastCounts || 0) > 2000) {
@@ -1155,6 +1184,10 @@ class SbEntityBrowserEditor extends HTMLElement {
       ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(p) ? `<span class="chip">from a Param Card</span>` : ""}`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
+      ...(stateMatcher({}, c) ? [["State", [
+        stateList(c.states).length ? stateList(c.states).map((s) => `<code>${esc(s)}</code>`).join(" ") : "",
+        numOrNull(c.state_min) != null || numOrNull(c.state_max) != null ? `<code>${numOrNull(c.state_min) ?? "…"} – ${numOrNull(c.state_max) ?? "…"}</code>` : "",
+      ].filter(Boolean).join(" <span class=\"chip\">OR</span> ") + ` <span class="chip">AND</span>`]] : []),
       ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
     ];
   }
@@ -1271,6 +1304,13 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "areas", selector: { area: { multiple: true } } },
       ], (v) => this._set(v));
       body.appendChild(this._form);
+      const sub2 = document.createElement("div"); sub2.className = "sub"; sub2.textContent = "State match"; body.appendChild(sub2);
+      this._form2 = this._mkForm([
+        { name: "states", selector: { text: {} } },
+        { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
+        { name: "state_max", selector: { number: { mode: "box", step: "any" } } },
+      ], (v) => this._set(v));
+      body.appendChild(this._form2);
     } else if (this._open === "display") {
       this._form = this._mkForm([
         { name: "title", selector: { text: {} } },
