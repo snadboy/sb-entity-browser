@@ -376,3 +376,24 @@ in-page truth from the same hass snapshot (no clock skew): lights on ≥1h
 21/21, >2h30m 21/21, sensors changed <10m 760/760, bare "120" minutes
 17/17, state_for alone 723/723; unreadable ("soon") ignored, flagged in
 the overview. Next: the integration (matcher port + sensor trio + event).
+
+## v0.19.0 — matching moved to the sb_filter integration (2026-09-27)
+
+User: no second implementation of the grammar. The JS matcher
+(`matchInfo`, `stateMatcher`, ranges, durations) is DELETED; the card sends
+`filterConfig(cfg)` (FILTER_KEYS) to `sb_filter/subscribe` and renders
+`_ids`/`_patCounts`/`configured`/`unreadable`/`grammar` as pushed.
+`_subscribe()` keys on the JSON of the filter part so editor keystrokes
+resubscribe only when the filter changes; superseded subscriptions are
+dropped by key; unsubscribe on disconnect, resubscribe on reconnect and
+first hass. Kept in JS: `patternMatcher` (the SEARCH BOX — runtime
+narrowing, not grammar), `fmtState` (display + search), label/area
+resolution (grouping + secondary text), `stateList` (overview chips).
+Editor: `_total()`/`_count()` are async one-shot `sb_filter/match` calls
+(cached per filter / per row, stale answers dropped). Missing integration →
+`e.code === "unknown_command"` → "SB Filter integration not installed…"
+in the list and the overview. Diagnostics note shows the grammar version.
+No local state_for tick any more (the backend pushes). Verified on the
+State Match view: 17/17 cards subscribed, counts identical to the JS
+matcher's last run; knob → resubscribe (48); missing-integration message;
+editor counts "Matches 13 entities now".

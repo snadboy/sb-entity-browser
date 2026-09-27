@@ -7,6 +7,8 @@ mode**. Everything is configured in the visual editor; the card creates **no
 helper entities**: the viewer's filter selection is card-local UI state,
 persisted per browser.
 
+> **Requires the [SB Filter](https://github.com/snadboy/sb-filter) integration** (HACS → Integration, then *Settings → Add integration → SB Filter*). Since v0.19.0 the card no longer decides which entities match: it subscribes to SB Filter, the one implementation of the filter grammar ([FILTER.md](https://github.com/snadboy/sb-filter/blob/main/FILTER.md)), and SB Filter pushes the ids whenever states, registries or time move them. Without it the card shows an explanatory message instead of a list.
+
 ## Features
 
 - **Entity matching** by patterns, **labels**, and **areas** — any mix of
