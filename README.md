@@ -65,6 +65,7 @@ All options are in the visual editor. For reference:
 | Option | Meaning |
 |---|---|
 | `title` | Card title |
+| `rule` | An SB Watch rule's Count sensor (`sensor.<rule>_count`): the card shows exactly what the rule holds **active** — after its dwell, the list it notified about. When set, every filter key below is ignored |
 | `patterns` | Entity-id substring globs, implied `*…*` |
 | `labels` | Entities must also carry one of these labels |
 | `areas` | Entities must also be in one of these areas |

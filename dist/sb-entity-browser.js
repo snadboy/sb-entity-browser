@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.19.0";
+const VERSION = "0.20.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -102,6 +102,7 @@ const filterConfig = (cfg) => {
   return out;
 };
 const filterLooksEmpty = (cfg) => {
+  if (cfg && cfg.rule) return false;          // a rule reference is a complete identity on its own
   const f = filterConfig(cfg);
   return !Object.keys(f).some((k) => (Array.isArray(f[k]) ? f[k].some((v) => v && String(v).trim() && !String(v).startsWith("___")) : true));
 };
@@ -219,6 +220,7 @@ class SbEntityBrowser extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (first && this._config) this._subscribe();
+    else if (this._config?.rule && this._syncRule()) { this._render(); return; }
     if (this._searchFocus) return; // don't yank the list mid-typing in the card search
     if (this._cfgTimer) return;    // a coalesced config render is pending; a hass tick must not front-run it
     // hass updates arrive on EVERY state change in the system. Render only
@@ -297,8 +299,33 @@ class SbEntityBrowser extends HTMLElement {
     return this._ids || [];
   }
 
+  // ---- a rule by reference: show exactly what SB Watch alerted on --------------
+  _syncRule() {
+    const rule = this._config?.rule;
+    if (!rule) return false;
+    const st = this._hass?.states?.[rule];
+    const ids = st ? (st.attributes.entity_ids || []) : null;
+    const key = JSON.stringify(ids);
+    if (key === this._ruleKey) return false;
+    this._ruleKey = key;
+    this._ids = ids || [];
+    this._patCounts = [];
+    this._unconfigured = false;
+    this._filterError = st ? null : "rule-missing";
+    this._grammar = st ? "rule" : undefined;
+    this._sig = "";
+    return true;
+  }
+
   // ---- the subscription to SB Filter ------------------------------------------
   async _subscribe() {
+    if (this._config?.rule) {                 // the rule's sensor is the source; no filter subscription
+      this._unsubscribeFilter();
+      this._subKey = "rule:" + this._config.rule;
+      this._syncRule();
+      this._render();
+      return;
+    }
     const conn = this._hass?.connection;
     if (!conn) return;
     const cfg = filterConfig(this._config);
@@ -640,7 +667,8 @@ class SbEntityBrowser extends HTMLElement {
     // An escape hatch, not just a message. Search and min/max can empty the list
     // with no chip to show for it, so the only way out must be on screen.
     const emptyHtml = `<div class="empty"><ha-icon icon="${this._filterError ? "mdi:puzzle-remove-outline" : this._ids == null ? "mdi:timer-sand" : this._unconfigured ? "mdi:filter-variant" : "mdi:magnify-remove-outline"}"></ha-icon>` +
-      `<div>${this._filterError === "missing" ? "SB Filter integration not installed — add it from HACS (snadboy/sb-filter), then Settings → Add integration → SB Filter"
+      `<div>${this._filterError === "rule-missing" ? `Rule sensor ${esc(String(this._config.rule))} not found — is that SB Watch rule still there?`
+        : this._filterError === "missing" ? "SB Filter integration not installed — add it from HACS (snadboy/sb-filter), then Settings → Add integration → SB Filter"
         : this._filterError ? `SB Filter error: ${esc(this._filterError)}`
         : this._ids == null ? "Matching…"
         : this._unconfigured ? "Choose an area or label, or configure an entity pattern"
@@ -1115,6 +1143,7 @@ const LABELS = {
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
   states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
   device_classes: "Device classes", units: "Units", state_for: "In current state for",
+  rule: "SB Watch rule (Count sensor)",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
@@ -1122,6 +1151,7 @@ const HELPERS = {
   states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
   device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
   units: "Comma-separated units of measurement, e.g. %, °F, W — exact match. Keeps a numeric range from sweeping in the wrong quantity.",
+  rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor). When set, every filter field above is ignored — the rule owns the filter.",
   state_for: "Time in the current state, e.g. 2h, 1h30m, 90s (bare number = minutes) = at least that long; <5m = changed within the last 5 minutes. Measured from last_changed, so it survives restarts.",
   state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
@@ -1157,6 +1187,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
     if (this._form2) this._form2.hass = hass;
+    if (this._form3) this._form3.hass = hass;
     // hass ticks are frequent; the counts don't need sub-second freshness.
     const now = Date.now();
     if (now - (this._lastCounts || 0) > 2000) {
@@ -1190,6 +1221,7 @@ class SbEntityBrowserEditor extends HTMLElement {
 
   // Live counts come from SB Filter (one-shot match); cached per filter, refreshed async.
   _total() {
+    if (this._config.rule) { const st = this._hass?.states?.[this._config.rule]; return st ? (st.attributes.entity_ids || []).length : null; }
     if (!this._hass?.connection) return null;
     const key = JSON.stringify(filterConfig(this._config));
     if (key !== this._totalKey) {
@@ -1206,6 +1238,10 @@ class SbEntityBrowserEditor extends HTMLElement {
     const c = this._config;
     const pats = (c.patterns || []).filter((p) => p && p.trim());
     const total = this._total();
+    if (c.rule) return [
+      ["Rule", `<code>${esc(c.rule)}</code> — shows what the rule holds active; filter fields ignored`],
+      ["Matches now", total == null ? `<span class="warn">rule sensor not found</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}`],
+    ];
     return [
       ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(p) ? `<span class="chip">from a Param Card</span>` : ""}`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
@@ -1335,6 +1371,11 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "areas", selector: { area: { multiple: true } } },
       ], (v) => this._set(v));
       body.appendChild(this._form);
+      const subR = document.createElement("div"); subR.className = "sub"; subR.textContent = "Or: an SB Watch rule"; body.appendChild(subR);
+      this._form3 = this._mkForm([
+        { name: "rule", selector: { entity: { filter: { integration: "sb_watch", domain: "sensor" } } } },
+      ], (v) => this._set(v));
+      body.appendChild(this._form3);
       const sub2 = document.createElement("div"); sub2.className = "sub"; sub2.textContent = "State match"; body.appendChild(sub2);
       this._form2 = this._mkForm([
         { name: "device_classes", selector: { text: {} } },

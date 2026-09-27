@@ -397,3 +397,12 @@ No local state_for tick any more (the backend pushes). Verified on the
 State Match view: 17/17 cards subscribed, counts identical to the JS
 matcher's last run; knob → resubscribe (48); missing-integration message;
 editor counts "Matches 13 entities now".
+
+## v0.20.0 — `rule:` shows an SB Watch rule by reference (2026-09-27)
+
+`rule: sensor.<rule>_count` → no SB Filter subscription; `_syncRule()` reads
+the sensor's `entity_ids` attribute on every hass tick (keyed on its JSON,
+renders only on change). Missing sensor → "Rule sensor … not found". Editor:
+Matching dialog sub-form "Or: an SB Watch rule" (entity picker filtered to
+integration sb_watch / domain sensor); overview collapses to Rule +
+Matches-now. Demo: State Match ④ "Batteries low — the SB Watch rule".
