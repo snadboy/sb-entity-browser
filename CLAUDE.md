@@ -41,7 +41,7 @@ release. HACS: update_information → download (users: Update in HACS), then
 - [x] v0.1.0 released 2026-09-18; installed via HACS (repo id 1376132759), resource auto-registered
 - [x] v0.1.1: numeric mode engages on mixed sets (>=8 numeric entities, >8 distinct values) —
       range inputs gate numeric rows, chips gate text rows side by side. Verified headless on
-      the Card Lab view (dashboard-monitor/card-lab, 2 test cards: switch.* chips mode,
+      the Card Lab view (dashboard-samples/card-lab, 2 test cards: switch.* chips mode,
       sensor.*_battery* mixed mode); zero console errors from the card.
 - [x] v0.2.0: implied leading/trailing wildcards ("battery" = *battery*; ~~blank patterns match
       nothing~~ — STALE: since the `active === 0` logic a blank row is IGNORED, measured
@@ -80,7 +80,7 @@ release. HACS: update_information → download (users: Update in HACS), then
       still AND), card shows "URL filter" note + tap-to-clear, follows location-changed/popstate.
       Card Lab: 2 Bubble buttons (FP300/LWR02 Occupancy) deep-link the lab-occ card; verified
       headless (15 FP300 rows w/ param + note, 30 without).
-- Card Lab view (dashboard-monitor/card-lab) is the card's permanent demo/test home for now —
+- Card Lab view (dashboard-samples/card-lab) is the card's permanent demo/test home for now —
   owner reviewed v0.5.0 and said to LEAVE the buttons + Occupancy/Switches/Batteries cards there
   (2026-09-18); don't promote or clean up without asking.
 - [x] v0.6.0 "implement all": Jinja secondary_template — one render_template WS subscription
@@ -360,7 +360,7 @@ in the Matching dialog's State match sub-form and the overview. Verified
 vs API truth: battery <20 = 18 → 2 with class or unit; temperature °F >75
 = 7/7; class-only config (no pattern) = 103/103. (A test-harness slip —
 `run()` not resetting `units` — first showed 0 for that; the direct probe
-settled it.) Dashboard: new Monitor view `state-match` with the example
+settled it.) Dashboard: new Samples view `state-match` with the example
 browsers.
 
 ## v0.18.0 — `state_for` (2026-09-27) — step 1 of SB Watch
@@ -406,3 +406,6 @@ renders only on change). Missing sensor → "Rule sensor … not found". Editor:
 Matching dialog sub-form "Or: an SB Watch rule" (entity picker filtered to
 integration sb_watch / domain sensor); overview collapses to Rule +
 Matches-now. Demo: State Match ④ "Batteries low — the SB Watch rule".
+
+
+(2026-09-27: the demo views — SB Cards Demo, State Match, Card Lab, Bubble Card, Metra UI tests, Metra Expanders — moved from Monitor to the **Samples** dashboard, `dashboard-samples`.)
