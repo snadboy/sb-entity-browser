@@ -362,3 +362,17 @@ vs API truth: battery <20 = 18 → 2 with class or unit; temperature °F >75
 `run()` not resetting `units` — first showed 0 for that; the direct probe
 settled it.) Dashboard: new Monitor view `state-match` with the example
 browsers.
+
+## v0.18.0 — `state_for` (2026-09-27) — step 1 of SB Watch
+
+Design agreed: a watch RULE = this card's filter + a duration + an action,
+with the integration owning a Python twin of the matcher (shared JSON test
+vectors) and the card able to show a rule by entity reference. Step 1 is
+the duration term in the card. `state_for`: `parseDuration` (comparator
+optional, default >=; d/h/m/s combinable; bare number = MINUTES), measured
+from `last_changed` so it survives restarts and needs no timer. The 60 s
+tick now also fires when a duration filter is set. Verified against an
+in-page truth from the same hass snapshot (no clock skew): lights on ≥1h
+21/21, >2h30m 21/21, sensors changed <10m 760/760, bare "120" minutes
+17/17, state_for alone 723/723; unreadable ("soon") ignored, flagged in
+the overview. Next: the integration (matcher port + sensor trio + event).

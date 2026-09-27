@@ -68,6 +68,7 @@ All options are in the visual editor. For reference:
 | `areas` | Entities must also be in one of these areas |
 | `states` | Final filter on the **state**: a list (or comma string) of values and/or numeric ranges, ORed — `[on, Detected, unavailable, "<20", ">=80", "40-60"]`. Values match the raw or formatted state, case-insensitively. Ranges: `<n`, `<=n`, `>n`, `>=n`, `a-b` / `a..b` (inclusive); only a numeric state can satisfy one. A Param Card's `$p$` works here, so a knob can offer "Low (<20)" |
 | `state_min` / `state_max` | Shorthand for one more inclusive range, either side open |
+| `state_for` | Time in the **current** state, from `last_changed`: `2h` / `>=2h` at least that long, `<5m` changed within the last five minutes. Units `d h m s` combine (`1h30m`); a bare number is minutes. The list re-evaluates every minute |
 | `device_classes` | Entities must carry one of these device classes (`battery, temperature`) — ANDed with the rest |
 | `units` | Entities must have one of these units of measurement (`%`, `°F`, `W`), exact match. Keeps a numeric range from sweeping in the wrong quantity — `sensor.*battery` with `<20` otherwise includes battery *voltage* sensors at 2.98 V |
 | `secondary` | Row secondary-info fields, joined with `·` |

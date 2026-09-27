@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.17.0";
+const VERSION = "0.18.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -102,6 +102,26 @@ const parseRange = (s) => {
   return { "<": { hi: n, hiX: true }, "<=": { hi: n, hiX: false }, ">": { lo: n, loX: true }, ">=": { lo: n, loX: false } }[m[1]];
 };
 const inRange = (n, r) => (r.lo == null || (r.loX ? n > r.lo : n >= r.lo)) && (r.hi == null || (r.hiX ? n < r.hi : n <= r.hi));
+// `state_for`: time in the CURRENT state (from last_changed, so it survives
+// restarts and needs no timer). "2h" / ">=2h" = at least; "<5m" = changed
+// within the last 5 minutes. Units d h m s, combinable ("1h30m"); a bare
+// number is MINUTES.
+const DUR_RX = /^(<=|<|>=|>)?\s*((?:\d+(?:\.\d+)?\s*[dhms]\s*)+|\d+(?:\.\d+)?)$/i;
+const parseDuration = (v) => {
+  if (v == null || v === "") return null;
+  const m = DUR_RX.exec(String(v).trim());
+  if (!m) return null;
+  const body = m[2].replace(/\s+/g, "");
+  let secs = 0;
+  if (/^[\d.]+$/.test(body)) secs = parseFloat(body) * 60;
+  else for (const [, n, u] of body.matchAll(/([\d.]+)([dhms])/gi)) secs += parseFloat(n) * { d: 86400, h: 3600, m: 60, s: 1 }[u.toLowerCase()];
+  return { op: m[1] || ">=", secs };
+};
+const stateForOk = (st, d) => {
+  const age = (Date.now() - new Date(st.last_changed).getTime()) / 1000;
+  return { "<": age < d.secs, "<=": age <= d.secs, ">": age > d.secs, ">=": age >= d.secs }[d.op];
+};
+
 const stateMatcher = (hass, config) => {
   const ranges = [], want = [];
   for (const s of stateList(config.states)) { const r = parseRange(s); if (r) ranges.push(r); else want.push(s.toLowerCase()); }
@@ -136,6 +156,7 @@ const matchInfo = (hass, config, extra) => {
   // battery pattern otherwise sweeps in battery VOLTAGE sensors (2.98 V < 20).
   const classes = stateList(config.device_classes).map((s) => s.toLowerCase());
   const units = stateList(config.units);
+  const dur = parseDuration(config.state_for);
   for (const id of Object.keys(hass.states)) {
     const st = hass.states[id];
     const name = st.attributes.friendly_name;
@@ -159,6 +180,7 @@ const matchInfo = (hass, config, extra) => {
     if (classes.length && !classes.includes(String(st.attributes.device_class || "").toLowerCase())) continue;
     if (units.length && !units.includes(String(st.attributes.unit_of_measurement ?? ""))) continue;
     if (stateOk && !stateOk(st)) continue;
+    if (dur && !stateForOk(st, dur)) continue;
     if (extra && !extra(id, name, st.state, fmt)) continue;
     ids.push(id);
   }
@@ -235,7 +257,7 @@ class SbEntityBrowser extends HTMLElement {
     // and an HA error card there reads as broken. Render an empty state and
     // match nothing (never the whole estate).
     this._unconfigured = !realPatterns.length && !(config.labels || []).length && !(config.areas || []).length && !stateMatcher({}, config)
-      && !stateList(config.device_classes).length && !stateList(config.units).length;
+      && !stateList(config.device_classes).length && !stateList(config.units).length && !parseDuration(config.state_for);
     this._config = {
       secondary: ["state"],
       tap_action: { action: "more-info" },
@@ -315,7 +337,7 @@ class SbEntityBrowser extends HTMLElement {
       this._setupIconReconcile(this._lastScrolls ?? false);
     }
     this._tick = setInterval(() => {
-      const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_"));
+      const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_")) || !!parseDuration(this._config?.state_for);
       if (needs && this._hass && this._config && !this._searchFocus) {
         this._sig = "";
         this._render();
@@ -1123,7 +1145,7 @@ const LABELS = {
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
   states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
-  device_classes: "Device classes", units: "Units",
+  device_classes: "Device classes", units: "Units", state_for: "In current state for",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
@@ -1131,6 +1153,7 @@ const HELPERS = {
   states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
   device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
   units: "Comma-separated units of measurement, e.g. %, °F, W — exact match. Keeps a numeric range from sweeping in the wrong quantity.",
+  state_for: "Time in the current state, e.g. 2h, 1h30m, 90s (bare number = minutes) = at least that long; <5m = changed within the last 5 minutes. Measured from last_changed, so it survives restarts.",
   state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
@@ -1211,6 +1234,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
       ...(stateList(c.device_classes).length ? [["Device class", stateList(c.device_classes).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
       ...(stateList(c.units).length ? [["Unit", stateList(c.units).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
+      ...(parseDuration(c.state_for) ? [["In state for", `<code>${esc(String(c.state_for))}</code> <span class="chip">AND</span>`]] : (c.state_for ? [["In state for", `<span class="warn">unreadable: ${esc(String(c.state_for))}</span>`]] : [])),
       ...(stateMatcher({}, c) ? [["State", [
         ...stateList(c.states).map((s) => `<code>${esc(s)}</code>${parseRange(s) ? `<span class="chip">range</span>` : ""}`),
         numOrNull(c.state_min) != null || numOrNull(c.state_max) != null ? `<code>${numOrNull(c.state_min) ?? "…"} – ${numOrNull(c.state_max) ?? "…"}</code><span class="chip">range</span>` : "",
@@ -1336,6 +1360,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "device_classes", selector: { text: {} } },
         { name: "units", selector: { text: {} } },
         { name: "states", selector: { text: {} } },
+        { name: "state_for", selector: { text: {} } },
         { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
         { name: "state_max", selector: { number: { mode: "box", step: "any" } } },
       ], (v) => this._set(v));
