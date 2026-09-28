@@ -409,3 +409,12 @@ Matches-now. Demo: State Match ④ "Batteries low — the SB Watch rule".
 
 
 (2026-09-27: the demo views — SB Cards Demo, State Match, Card Lab, Bubble Card, Metra UI tests, Metra Expanders — moved from Monitor to the **Samples** dashboard, `dashboard-samples`.)
+
+## v0.21.0 — grammar v2 validation surfaced (2026-09-28)
+
+SB Filter 0.2.0 returns `unmatched_values` (`[{value, suggestions}]`): a
+`states` word no selected entity can ever be in. The card shows it in the
+editor overview ("`Cleat` matches nothing — did you mean `Clear`?"), in the
+empty state, and in the diagnostics note. Numeric equality (`states: [100]`)
+comes for free from the backend. Chips from `sb_filter/values` are the next
+step.

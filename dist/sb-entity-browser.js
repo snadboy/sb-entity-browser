@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.20.0";
+const VERSION = "0.21.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -341,6 +341,7 @@ class SbEntityBrowser extends HTMLElement {
         this._patCounts = m.pattern_counts || [];
         this._unconfigured = !m.configured;
         this._unreadable = m.unreadable || [];
+        this._unmatched = m.unmatched_values || [];
         this._grammar = m.grammar;
         this._filterError = null;
         this._sig = "";
@@ -672,6 +673,7 @@ class SbEntityBrowser extends HTMLElement {
         : this._filterError ? `SB Filter error: ${esc(this._filterError)}`
         : this._ids == null ? "Matching…"
         : this._unconfigured ? "Choose an area or label, or configure an entity pattern"
+        : (this._unmatched || []).length ? `No entity can be in state “${esc(this._unmatched[0].value)}”${this._unmatched[0].suggestions[0] ? ` — did you mean “${esc(this._unmatched[0].suggestions[0])}”?` : ""}`
         : `No entities match${filtered ? " the current filters" : ""}`}</div>` +
       (filtered ? `<div class="clear-all" role="button" tabindex="0">Clear filters</div>` : "") +
       `</div>`;
@@ -769,7 +771,7 @@ class SbEntityBrowser extends HTMLElement {
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION} · SB Filter grammar ${this._grammar ?? "?"}${(this._unreadable || []).length ? ` · <span class="warn">unreadable: ${esc(this._unreadable.join(", "))}</span>` : ""}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION} · SB Filter grammar ${this._grammar ?? "?"}${(this._unreadable || []).length ? ` · <span class="warn">unreadable: ${esc(this._unreadable.join(", "))}</span>` : ""}${(this._unmatched || []).length ? ` · <span class="warn">no such state: ${esc(this._unmatched.map((u) => u.value + (u.suggestions[0] ? ` (→ ${u.suggestions[0]}?)` : "")).join(", "))}</span>` : ""}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
@@ -1227,7 +1229,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     if (key !== this._totalKey) {
       this._totalKey = key; this._totalN = undefined;
       this._hass.connection.sendMessagePromise({ type: "sb_filter/match", config: filterConfig(this._config) })
-        .then((r) => { if (this._totalKey !== key) return; this._totalN = r.ids.length; this._unreadable = r.unreadable || []; this._renderOverview(); })
+        .then((r) => { if (this._totalKey !== key) return; this._totalN = r.ids.length; this._unreadable = r.unreadable || []; this._unmatched = r.unmatched_values || []; this._renderOverview(); })
         .catch((e) => { if (this._totalKey !== key) return; this._totalN = null; this._filterError = e?.code === "unknown_command" ? "missing" : String(e?.message || e); this._renderOverview(); });
     }
     return this._totalN ?? null;
@@ -1254,6 +1256,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         (c.state_min != null && c.state_min !== "") || (c.state_max != null && c.state_max !== "") ? `<code>${esc(String(c.state_min ?? "…"))} – ${esc(String(c.state_max ?? "…"))}</code>` : "",
       ].filter(Boolean).join(" <span class=\"chip\">OR</span> ") + ` <span class="chip">AND</span>`]] : []),
       ...((this._unreadable || []).length ? [["Unreadable", `<span class="warn">${esc(this._unreadable.join(", "))}</span>`]] : []),
+      ...((this._unmatched || []).map((u) => ["State value", `<span class="warn"><code>${esc(u.value)}</code> matches nothing${u.suggestions.length ? ` — did you mean ${u.suggestions.map((s) => `<code>${esc(s)}</code>`).join(" or ")}?` : ""}</span>`])),
       ...(this._filterError === "missing" ? [["SB Filter", `<span class="warn">integration not installed — counts and matching need it</span>`]] : []),
       ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
     ];
