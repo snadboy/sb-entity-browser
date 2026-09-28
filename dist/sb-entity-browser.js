@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.22.0";
+const VERSION = "0.23.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -1115,6 +1115,10 @@ const EDITOR_STYLE = `
   .spe .off { color: var(--secondary-text-color); font-style: italic; }
   .spe .warn { color: var(--warning-color, orange); }
   .spe .note { color: var(--secondary-text-color); font-size: .8em; padding: 2px 4px 6px; }
+  .spe .rulebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--divider-color); font-size: .85em; }
+  .spe .rulebar button { font: inherit; font-size: .9em; color: var(--primary-color); background: none; border: 1px solid var(--primary-color); border-radius: 14px; padding: 3px 12px; cursor: pointer; }
+  .spe .rulebar .ok { color: var(--success-color, #43a047); }
+  dialog.sped .rname { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); color: var(--primary-text-color); }
   dialog.sped { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0; width: min(600px, 92vw); max-height: 85vh;
     background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
   dialog.sped::backdrop { background: rgba(0,0,0,.45); }
@@ -1371,11 +1375,13 @@ class SbEntityBrowserEditor extends HTMLElement {
     const sec = (id, title, rows) => `<div class="sec"><h3>${title}<button data-sec="${id}">Edit</button></h3>
       <div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div></div>`;
     this._ov.innerHTML =
-      sec("matching", "Matching", this._summaryMatching()) +
+      sec("matching", "Matching", this._summaryMatching()).replace("</div></div>", `</div>${this._ruleBar()}</div>`) +
       sec("display", "Display", this._summaryDisplay()) +
       sec("controls", "Controls", this._summaryControls()) +
       `<div class="note">Patterns, labels and areas are the card's identity. Words in one pattern are ANDed — put an SB Param Card's <code>$name$</code> inside a pattern (“fp300 $q$”) to let a dropdown narrow it; the search box narrows on top.</div>`;
     this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
+    const sv = this._ov.querySelector("button.saverule"); if (sv) sv.addEventListener("click", () => this._openSaveRule());
+    const us = this._ov.querySelector("button.userule"); if (us) us.addEventListener("click", () => { this._set({ rule: this._savedRule.sensor }, true); this._savedRule = null; this._renderOverview(); });
   }
 
   _render() {
@@ -1387,6 +1393,68 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._ov = document.createElement("div");
       this.appendChild(this._ov);
     }
+    this._renderOverview();
+  }
+
+  // ---- save this card's filter as an SB Watch rule ------------------------------
+  _ruleBar() {
+    if (this._config.rule) return "";
+    if (this._savedRule) return `<div class="rulebar"><span class="ok">Saved as rule “${esc(this._savedRule.name)}”</span>${this._savedRule.sensor ? `<code>${esc(this._savedRule.sensor)}</code><button class="userule">Show this rule in the card</button>` : ""}</div>`;
+    if (this._ruleError) return `<div class="rulebar"><span class="warn">${esc(this._ruleError)}</span><button class="saverule">Try again</button></div>`;
+    if (filterLooksEmpty(this._config)) return "";
+    return `<div class="rulebar"><button class="saverule">Save as SB Watch rule…</button><span class="off">a rule that watches exactly this filter — add a dwell and actions in its settings</span></div>`;
+  }
+
+  _openSaveRule() {
+    this._closeDialog(false);
+    const d = document.createElement("dialog"); d.className = "sped";
+    d.innerHTML = `<div class="ph"><span>Save as SB Watch rule</span><button class="x" title="Close">✕</button></div>
+      <div class="pb"><div class="sub">Rule name</div><input class="rname" placeholder="e.g. Batteries low" value="${esc(this._config.title || "")}">
+        <div class="note" style="margin-top:8px">Creates a rule with this card's filter. Its dwell, notification and actions are set afterwards in the rule's settings (Settings → Devices &amp; services → SB Watch).</div>
+        <div class="note warn saveerr" style="display:none"></div></div>
+      <div class="pf"><button class="cancel">Cancel</button><button class="done">Create rule</button></div>`;
+    this.appendChild(d);
+    const close = () => { try { d.close(); } catch (e) { /* closed */ } d.remove(); };
+    d.querySelector(".x").addEventListener("click", close);
+    d.querySelector(".cancel").addEventListener("click", close);
+    const input = d.querySelector(".rname"), err = d.querySelector(".saveerr");
+    d.querySelector(".done").addEventListener("click", async () => {
+      const name = input.value.trim();
+      if (!name) { err.style.display = ""; err.textContent = "Give the rule a name."; return; }
+      d.querySelector(".done").disabled = true;
+      try { await this._createRule(name); close(); }
+      catch (e) { err.style.display = ""; err.textContent = String(e?.message || e); d.querySelector(".done").disabled = false; }
+    });
+    d.showModal(); input.focus(); input.select();
+  }
+
+  // Drives SB Watch's two-step config flow: the filter (minus states) as the
+  // advanced YAML field — JSON is YAML, so nothing is lost to text-field
+  // conversions — and the states on step two, where the rule form keeps them.
+  async _createRule(name) {
+    const hass = this._hass;
+    const f = filterConfig(this._config);
+    const states = stateList(f.states); const smin = f.state_min, smax = f.state_max;
+    delete f.states; delete f.state_min; delete f.state_max;
+    let flow;
+    try { flow = await hass.callApi("POST", "config/config_entries/flow", { handler: "sb_watch" }); }
+    catch (e) { throw new Error("SB Watch integration not installed (or you are not an admin)"); }
+    if (flow.type !== "form") throw new Error(`Unexpected flow reply: ${flow.type}${flow.reason ? " — " + flow.reason : ""}`);
+    const step2 = await hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { name, filter_yaml: JSON.stringify(f), problem: true });
+    if (step2.type !== "form" || step2.step_id !== "values") throw new Error(step2.errors ? `Rejected: ${JSON.stringify(step2.errors)}` : `Unexpected step ${step2.step_id}`);
+    const done = await hass.callApi("POST", `config/config_entries/flow/${step2.flow_id}`, { states, state_min: smin ?? "", state_max: smax ?? "", actions: { action: "none" } });
+    if (done.type !== "create_entry") {
+      const ph = done.description_placeholders?.unmatched;
+      throw new Error(done.errors ? `Rejected: ${Object.values(done.errors).join(", ")}${ph ? " — " + ph : ""}` : `Unexpected step ${done.step_id}`);
+    }
+    const entryId = done.result?.entry_id;
+    let sensor = null;
+    try {
+      const reg = await hass.connection.sendMessagePromise({ type: "config/entity_registry/list" });
+      sensor = (reg.find((e) => e.config_entry_id === entryId && e.entity_id.startsWith("sensor.")) || {}).entity_id || null;
+    } catch (e) { /* the bar just omits the sensor */ }
+    this._savedRule = { name, sensor };
+    this._ruleError = null;
     this._renderOverview();
   }
 

@@ -433,3 +433,18 @@ numbers live in a plain input ("Ranges and numbers") — `_isRangeish` is a
 display-only classifier, not matching. Verified headless (`chips_test.js`):
 Clear 13 / Detected 0, typo chip → removed, tick Detected → `on`, Clear →
 `off`, box ">=80, 100" → list, scope → lights re-draws On/Off/unavailable.
+
+## v0.23.0 — Save as SB Watch rule (2026-09-28)
+
+Editor overview, under Matching: `_ruleBar()` → "Save as SB Watch rule…"
+(hidden in `rule:` mode or when the filter is empty). `_openSaveRule()` =
+a `dialog.sped` with a name (prefilled from the title). `_createRule()`
+drives SB Watch's two-step config flow via `hass.callApi("POST",
+"config/config_entries/flow")`: step 1 `{name, filter_yaml:
+JSON.stringify(filter minus states), problem: true}` (JSON is YAML — no
+text-field lossiness), step 2 `{states, state_min, state_max, actions:
+{action: "none"}}`; errors (incl. `unmatched` placeholder) surface in the
+dialog; on success the bar shows the rule + its Count sensor (looked up
+by `config_entry_id` in `config/entity_registry/list`) and "Show this rule
+in the card" sets `rule:`. Admin-only (config flow API). Verified headless
+(`saverule_test.js`); the created rule's filter equalled the card's.
