@@ -418,3 +418,18 @@ editor overview ("`Cleat` matches nothing — did you mean `Clear`?"), in the
 empty state, and in the diagnostics note. Numeric equality (`states: [100]`)
 comes for free from the backend. Chips from `sb_filter/values` are the next
 step.
+
+## v0.22.0 — state-value chips (2026-09-28)
+
+Matching dialog: the States text field is gone. `_renderValueChips()` asks
+`sb_filter/values` for the vocabulary of the NON-state part of the filter
+(keyed on its JSON; refetched when patterns/labels/areas/classes/units
+change, debounced TYPING_QUIET_MS from `_set`), draws `.vchip`s (label,
+current count, dashed when 0, cap 40 + note), a chip is `on` when
+`states` holds its raw value OR its label (legacy configs), ticking stores
+the RAW value; a word in `states` that is in nobody's vocabulary is a red
+chip with the did-you-mean from `_unmatched` and ✕ removes it. Ranges and
+numbers live in a plain input ("Ranges and numbers") — `_isRangeish` is a
+display-only classifier, not matching. Verified headless (`chips_test.js`):
+Clear 13 / Detected 0, typo chip → removed, tick Detected → `on`, Clear →
+`off`, box ">=80, 100" → list, scope → lights re-draws On/Off/unavailable.

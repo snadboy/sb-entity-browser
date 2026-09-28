@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.21.0";
+const VERSION = "0.22.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -1126,6 +1126,17 @@ const EDITOR_STYLE = `
   dialog.sped .pf button.done { background: var(--primary-color); color: var(--text-primary-color, #fff); }
   dialog.sped .hint { color: var(--secondary-text-color); font-size: .8em; padding: 6px 2px 10px; }
   dialog.sped .sub { color: var(--secondary-text-color); font-size: .75em; letter-spacing: .04em; text-transform: uppercase; margin: 10px 0 6px; }
+  dialog.sped .vchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+  dialog.sped .vchip { cursor: pointer; user-select: none; font-size: .85em; padding: 3px 10px; border-radius: 12px;
+    border: 1px solid var(--divider-color); color: var(--primary-text-color); background: transparent; margin: 0; }
+  dialog.sped .vchip:hover { border-color: var(--primary-color); }
+  dialog.sped .vchip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+  dialog.sped .vchip .n { opacity: .7; margin-left: 5px; }
+  dialog.sped .vchip.zero { opacity: .6; border-style: dashed; }
+  dialog.sped .vchip.zero.on { opacity: 1; }
+  dialog.sped .vchip.bad { border-color: var(--warning-color, orange); color: var(--warning-color, orange); }
+  dialog.sped .vchip.bad.on { background: var(--warning-color, orange); color: #fff; }
+  dialog.sped .vnote { color: var(--secondary-text-color); font-size: .8em; margin: 0 0 6px; }
   dialog.sped .prow { display: flex; align-items: center; gap: 4px; }
   dialog.sped .prow input { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; color: var(--primary-text-color);
     background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none; border-bottom: 1px solid var(--divider-color);
@@ -1189,6 +1200,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
     if (this._form2) this._form2.hass = hass;
+    if (this._form2c) this._form2c.hass = hass;
     if (this._form3) this._form3.hass = hass;
     // hass ticks are frequent; the counts don't need sub-second freshness.
     const now = Date.now();
@@ -1213,6 +1225,70 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._config = { ...this._config, ...patch };
     this._emit(now);
     this._scheduleOverview();
+    if (this._vchips && this._open === "matching") {
+      clearTimeout(this._vchipTimer);
+      this._vchipTimer = setTimeout(() => this._renderValueChips(), TYPING_QUIET_MS);
+    }
+  }
+
+  // ---- state-value chips ----------------------------------------------------
+  // A states entry is either a WORD (a chip) or a range/number (the text box).
+  _isRangeish(s) { return /^(<=|<|>=|>)\s*-?\d|^-?\d+(\.\d+)?(\s*(\.\.|-)\s*-?\d+(\.\d+)?)?$/.test(String(s).trim()); }
+  _statesList() { return stateList(this._config.states); }
+  _extraStates() { return this._statesList().filter((s) => this._isRangeish(s)); }
+  _wordStates() { return this._statesList().filter((s) => !this._isRangeish(s)); }
+  _chipStates() { return this._wordStates(); }
+  _setStates(words, extraText) {
+    const extra = stateList(extraText).filter((s) => this._isRangeish(s));
+    const all = [...words, ...extra];
+    this._set({ states: all.length ? all : undefined });
+    this._vocabKey = null;                    // re-evaluate unmatched words
+    this._renderValueChips();
+  }
+  _renderValueChips() {
+    if (!this._vchips || !this._hass?.connection) return;
+    const scope = filterConfig(this._config);
+    delete scope.states; delete scope.state_min; delete scope.state_max; delete scope.state_for;
+    const key = JSON.stringify(scope);
+    if (key !== this._vocabKey) {
+      this._vocabKey = key;
+      this._vocab = null;
+      this._vnote.textContent = "Reading the vocabulary…";
+      this._hass.connection.sendMessagePromise({ type: "sb_filter/values", config: scope })
+        .then((r) => { if (this._vocabKey !== key) return; this._vocab = r.values || []; this._drawChips(); })
+        .catch(() => { if (this._vocabKey !== key) return; this._vocab = []; this._drawChips(); });
+      return;
+    }
+    this._drawChips();
+  }
+  _drawChips() {
+    const box = this._vchips; if (!box || !box.isConnected) return;
+    const vocab = this._vocab || [];
+    const words = this._wordStates();
+    const lower = words.map((w) => w.toLowerCase());
+    const isOn = (item) => lower.includes(String(item.value).toLowerCase()) || lower.includes(String(item.label).toLowerCase());
+    const CAP = 40;
+    const shown = vocab.slice(0, CAP);
+    const known = new Set(vocab.flatMap((i) => [String(i.value).toLowerCase(), String(i.label).toLowerCase()]));
+    const unknown = words.filter((w) => !known.has(w.toLowerCase()));
+    const hint = (w) => (this._unmatched || []).find((u) => u.value.toLowerCase() === w.toLowerCase())?.suggestions?.[0];
+    box.innerHTML =
+      shown.map((i) => `<span class="vchip ${isOn(i) ? "on" : ""} ${i.current ? "" : "zero"}" data-v="${esc(String(i.value))}" data-l="${esc(String(i.label))}" title="${esc(String(i.value))} — ${i.current} now, ${i.possible} can be">${esc(String(i.label))}<span class="n">${i.current}</span></span>`).join("") +
+      unknown.map((w) => `<span class="vchip bad on" data-bad="${esc(w)}" title="No selected entity can be in this state — click to remove">${esc(w)}${hint(w) ? ` <span class="n">→ ${esc(hint(w))}?</span>` : ""} ✕</span>`).join("");
+    const hidden = vocab.length - shown.length;
+    this._vnote.textContent = vocab.length
+      ? `Tick the states to match — the number is how many selected entities are in it now.${hidden > 0 ? ` ${hidden} rarer values not shown; type them in the box.` : ""}`
+      : "No vocabulary yet — add a pattern, label, area or device class above.";
+    box.querySelectorAll(".vchip[data-v]").forEach((el) => el.addEventListener("click", () => {
+      const v = el.dataset.v, l = el.dataset.l;
+      let next = this._wordStates().filter((w) => w.toLowerCase() !== v.toLowerCase() && w.toLowerCase() !== l.toLowerCase());
+      if (!el.classList.contains("on")) next.push(v);            // store the RAW value
+      this._setStates(next, this._vextra ? this._vextra.value : "");
+    }));
+    box.querySelectorAll(".vchip[data-bad]").forEach((el) => el.addEventListener("click", () => {
+      const w = el.dataset.bad;
+      this._setStates(this._wordStates().filter((x) => x.toLowerCase() !== w.toLowerCase()), this._vextra ? this._vextra.value : "");
+    }));
   }
 
   // ---- overview -----------------------------------------------------------
@@ -1339,6 +1415,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     const d = this._dlg;
     if (!d) return;
     this._dlg = null; this._open = null; this._form = null; this._patRows = null; this._patWrap = null;
+    this._vchips = null; this._vnote = null; this._vextra = null; this._form2c = null; clearTimeout(this._vchipTimer);
     clearTimeout(this._emitTimer);
     if (restore && this._snap) { this._config = this._snap; }
     this._emit(true);                       // flush: a pending debounced edit, or the restore
@@ -1383,12 +1460,26 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._form2 = this._mkForm([
         { name: "device_classes", selector: { text: {} } },
         { name: "units", selector: { text: {} } },
-        { name: "states", selector: { text: {} } },
+      ], (v) => this._set(v));
+      body.appendChild(this._form2);
+      // State values: chips from SB Filter's vocabulary of what the other fields select
+      // (raw value stored, translated label shown), plus a box for ranges and numbers.
+      const subV = document.createElement("div"); subV.className = "sub"; subV.textContent = "State values"; body.appendChild(subV);
+      this._vnote = document.createElement("div"); this._vnote.className = "vnote"; body.appendChild(this._vnote);
+      this._vchips = document.createElement("div"); this._vchips.className = "vchips"; body.appendChild(this._vchips);
+      const erow = document.createElement("div"); erow.className = "prow";
+      this._vextra = document.createElement("input"); this._vextra.type = "text"; this._vextra.placeholder = "Ranges and numbers: <20, >=80, 40-60, 100";
+      this._vextra.value = this._extraStates().join(", ");
+      this._vextra.addEventListener("change", () => this._setStates(this._chipStates(), this._vextra.value));
+      erow.appendChild(this._vextra); body.appendChild(erow);
+      this._vocabKey = null;
+      this._renderValueChips();
+      this._form2c = this._mkForm([
         { name: "state_for", selector: { text: {} } },
         { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
         { name: "state_max", selector: { number: { mode: "box", step: "any" } } },
       ], (v) => this._set(v));
-      body.appendChild(this._form2);
+      body.appendChild(this._form2c);
     } else if (this._open === "display") {
       this._form = this._mkForm([
         { name: "title", selector: { text: {} } },
