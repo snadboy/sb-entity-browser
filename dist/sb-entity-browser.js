@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.23.0";
+const VERSION = "0.24.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -95,7 +95,7 @@ const stateList = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : St
 // time (state_for) all move them. The grammar is FILTER.md in
 // github.com/snadboy/sb-filter; the search box below is runtime narrowing on
 // top of the result, not part of the grammar.
-const FILTER_KEYS = ["patterns", "labels", "areas", "device_classes", "units", "states", "state_min", "state_max", "state_for"];
+const FILTER_KEYS = ["patterns", "labels", "areas", "device_classes", "units", "states", "state_min", "state_max", "state_for", "rate", "rate_window"];
 const filterConfig = (cfg) => {
   const out = {};
   for (const k of FILTER_KEYS) if (cfg && cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "") out[k] = cfg[k];
@@ -1160,7 +1160,7 @@ const LABELS = {
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
   states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
   device_classes: "Device classes", units: "Units", state_for: "In current state for",
-  rule: "SB Watch rule (Count sensor)",
+  rule: "SB Watch rule (Count sensor)", rate: "Rate of change", rate_window: "Rate window",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
@@ -1168,6 +1168,8 @@ const HELPERS = {
   states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
   device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
   units: "Comma-separated units of measurement, e.g. %, °F, W — exact match. Keeps a numeric range from sweeping in the wrong quantity.",
+  rate: "Comma-separated, comparator required: >0.5/h, <-2/h, >=1/m. Change of a numeric state per minute/hour/day; a sensor needs history at least as old as the window, else it never matches.",
+  rate_window: "Measure over this span instead of the rate's unit — e.g. 30m, 6h.",
   rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor). When set, every filter field above is ignored — the rule owns the filter.",
   state_for: "Time in the current state, e.g. 2h, 1h30m, 90s (bare number = minutes) = at least that long; <5m = changed within the last 5 minutes. Measured from last_changed, so it survives restarts.",
   state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
@@ -1252,7 +1254,7 @@ class SbEntityBrowserEditor extends HTMLElement {
   _renderValueChips() {
     if (!this._vchips || !this._hass?.connection) return;
     const scope = filterConfig(this._config);
-    delete scope.states; delete scope.state_min; delete scope.state_max; delete scope.state_for;
+    delete scope.states; delete scope.state_min; delete scope.state_max; delete scope.state_for; delete scope.rate; delete scope.rate_window;
     const key = JSON.stringify(scope);
     if (key !== this._vocabKey) {
       this._vocabKey = key;
@@ -1331,6 +1333,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       ...(stateList(c.device_classes).length ? [["Device class", stateList(c.device_classes).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
       ...(stateList(c.units).length ? [["Unit", stateList(c.units).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
       ...(c.state_for ? [["In state for", `<code>${esc(String(c.state_for))}</code> <span class="chip">AND</span>`]] : []),
+      ...(stateList(c.rate).length ? [["Rate", stateList(c.rate).map((s) => `<code>${esc(s)}</code>`).join(" <span class=\"chip\">OR</span> ") + (c.rate_window ? ` over <code>${esc(String(c.rate_window))}</code>` : "") + ` <span class="chip">AND</span>`]] : []),
       ...((stateList(c.states).length || (c.state_min != null && c.state_min !== "") || (c.state_max != null && c.state_max !== "")) ? [["State", [
         ...stateList(c.states).map((s) => `<code>${esc(s)}</code>`),
         (c.state_min != null && c.state_min !== "") || (c.state_max != null && c.state_max !== "") ? `<code>${esc(String(c.state_min ?? "…"))} – ${esc(String(c.state_max ?? "…"))}</code>` : "",
@@ -1544,6 +1547,8 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._renderValueChips();
       this._form2c = this._mkForm([
         { name: "state_for", selector: { text: {} } },
+        { name: "rate", selector: { text: {} } },
+        { name: "rate_window", selector: { text: {} } },
         { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
         { name: "state_max", selector: { number: { mode: "box", step: "any" } } },
       ], (v) => this._set(v));

@@ -448,3 +448,9 @@ dialog; on success the bar shows the rule + its Count sensor (looked up
 by `config_entry_id` in `config/entity_registry/list`) and "Show this rule
 in the card" sets `rule:`. Admin-only (config flow API). Verified headless
 (`saverule_test.js`); the created rule's filter equalled the card's.
+
+## v0.24.0 — rate fields (2026-09-28)
+
+`rate` / `rate_window` join FILTER_KEYS (passed through to SB Filter 0.3.0,
+grammar v3), the State match form and the overview ("Rate `>0.5/h` OR
+`<-2/h` over `1h`"). The chips scope excludes them (not vocabulary).
