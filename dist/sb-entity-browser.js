@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.24.0";
+const VERSION = "0.25.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -346,7 +346,7 @@ class SbEntityBrowser extends HTMLElement {
         this._filterError = null;
         this._sig = "";
         this._render();
-      }, { type: "sb_filter/subscribe", config: cfg });
+      }, { type: "sb_filter/subscribe", config: cfg, origin: `card: ${this._config.title || this._config.storage_id || "untitled"}` });
       if (this._subKey !== key) { try { unsub(); } catch (e) { /* superseded */ } return; }
       this._unsub = unsub;
     } catch (e) {

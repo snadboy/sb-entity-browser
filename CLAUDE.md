@@ -454,3 +454,7 @@ in the card" sets `rule:`. Admin-only (config flow API). Verified headless
 `rate` / `rate_window` join FILTER_KEYS (passed through to SB Filter 0.3.0,
 grammar v3), the State match form and the overview ("Rate `>0.5/h` OR
 `<-2/h` over `1h`"). The chips scope excludes them (not vocabulary).
+
+## v0.25.0 (2026-09-28)
+
+The subscription carries `origin: "card: <title|storage_id>"` so SB Filter's `sensor.sb_filter_live_filters` names the card.
