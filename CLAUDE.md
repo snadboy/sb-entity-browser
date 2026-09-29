@@ -492,3 +492,16 @@ instead); hass forwarded from the outer setter; `_render()` defers while
 `_popDlg` is set and catches up on close; backdrop click / Esc / ✕ close;
 disconnect closes it. Config `popout: false` hides the button. Demo:
 State Match ⑦.
+
+## v0.28.0 — fixed_size; chevron as a real button (2026-09-29)
+
+User: "no chevron" (it sat left of the title and read as decoration) and
+"the card still varies when fewer match" (Layout rows only cover
+sections cells and not wrapped cards). `fixed_size: true` → in auto mode
+the list gets `min-height` = list_rows × measured row height (em
+fallback first paint), rAF measurement runs when `scrolls || fixedSize`.
+Chevron moved to the right beside ⤢ as a bordered round button
+(chevron-down/up). `_popFill` split into `_forceFill` (fill the host —
+set by the pop-out AND by a wrapper in a fixed cell) and `_isPopout`
+(✕ instead of ⤢, no chevron). Param Card 0.12.0 passes fixed Layout rows
+through (`getGridOptions`, host flex column + child flex + `_forceFill`).

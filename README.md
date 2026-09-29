@@ -85,7 +85,8 @@ All options are in the visual editor. For reference:
 | `show_group_selector` | Group-by dropdown in the card header; the viewer's choice persists per browser and overrides `group_by` |
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
-| **Size** | In a sections view, give the card fixed rows in its **Layout** tab and it fills that cell (the list scrolls inside; the cell never changes size, so neighbours never shift). Without fixed rows the card sizes itself from `list_rows` |
+| `fixed_size` | Keep the card as tall as `list_rows` even when fewer entities match, so neighbouring cards don't shift (any view) |
+| **Layout rows** | In a sections view, give the card fixed rows in its **Layout** tab and it fills that cell, the list scrolling inside — also when wrapped in an SB Param Card |
 | **Collapse** | The chevron in the header hides the entries (chips and list); remembered per browser |
 | `popout` | The ⤢ button opens the same card full size in a dialog (same chips, search and grouping). `false` hides the button |
 | `list_rows` | Hard on-screen limit (3–50, default 10): the list shows this many rows and scrolls for the rest |
