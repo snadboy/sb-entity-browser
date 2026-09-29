@@ -85,6 +85,9 @@ All options are in the visual editor. For reference:
 | `show_group_selector` | Group-by dropdown in the card header; the viewer's choice persists per browser and overrides `group_by` |
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
+| **Size** | In a sections view, give the card fixed rows in its **Layout** tab and it fills that cell (the list scrolls inside; the cell never changes size, so neighbours never shift). Without fixed rows the card sizes itself from `list_rows` |
+| **Collapse** | The chevron in the header hides the entries (chips and list); remembered per browser |
+| `popout` | The ⤢ button opens the same card full size in a dialog (same chips, search and grouping). `false` hides the button |
 | `list_rows` | Hard on-screen limit (3–50, default 10): the list shows this many rows and scrolls for the rest |
 | `tap_action` | Standard HA action for the row (more-info, toggle, navigate, url, perform-action, assist, none) |
 | `icon_tap_action` | A separate action for the row's **icon**; the rest of the row keeps `tap_action`. A `toggle` only arms (pointer, hover ring) on rows whose domain registers a `toggle` service on your HA and whose state is known — elsewhere the icon click falls through to the row |

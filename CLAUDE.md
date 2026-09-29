@@ -474,3 +474,21 @@ Scroll restore detail: right after `innerHTML` the new `.list` measures
 0×0, so a scrollTop set there is clamped to 0 — the restore lives in the
 existing post-layout `requestAnimationFrame` that sets the px max-height
 (`_keepScroll`). Verified: forced rebuild keeps 250; tick = 0 renders.
+
+## v0.27.0 — static size, collapse, pop-out (2026-09-29)
+
+User: a short list shrank the card and shifted neighbours; wanted a
+collapse and a pop-out. (1) Grid-aware: `static getGridOptions()`
+{columns 12, min 4, rows auto, min_rows 2}; `_fill` = `grid_options.rows`
+is a number (the Layout tab) or the pop-out; in fill mode `:host`/ha-card
+are `height:100%` flex column and `.list` is `flex:1; min-height:0` with
+NO px max-height (the rAF measurement skips it), so the card fills the
+cell and the list scrolls. Auto mode unchanged (list_rows cap).
+(2) Collapse chevron: `ha-card.collapsed > :not(.header) { display:none }`,
+persisted (`collapsed` in the localStorage blob). (3) Pop-out: header ⤢
+→ `dialog.sebpop` IN THE SHADOW ROOT holding a second `sb-entity-browser`
+with `_popFill = true`, list_rows 500, `popout: false` (it gets a ✕
+instead); hass forwarded from the outer setter; `_render()` defers while
+`_popDlg` is set and catches up on close; backdrop click / Esc / ✕ close;
+disconnect closes it. Config `popout: false` hides the button. Demo:
+State Match ⑦.

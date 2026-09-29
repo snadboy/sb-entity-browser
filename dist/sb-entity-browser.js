@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.26.0";
+const VERSION = "0.27.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -195,6 +195,7 @@ class SbEntityBrowser extends HTMLElement {
       this._bsel = new Set(saved.bsel || []);
       this._coll = new Set(saved.coll || []);
       this._gsel = saved.gsel ?? null;
+      this._collapsed = !!saved.collapsed;
     } catch (e) {
       this._selected = new Set();
       this._bsel = new Set();
@@ -219,6 +220,7 @@ class SbEntityBrowser extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    if (this._pop) this._pop.hass = hass;
     if (first && this._config) this._subscribe();
     else if (this._config?.rule && this._syncRule()) { this._render(); return; }
     if (this._searchFocus) return; // don't yank the list mid-typing in the card search
@@ -246,6 +248,20 @@ class SbEntityBrowser extends HTMLElement {
     return 4;
   }
 
+  // Sections layout: the Layout tab can give the card a fixed number of grid
+  // rows; the card then FILLS that cell (list scrolls inside) instead of
+  // sizing itself from list_rows. That is the "static size" — the cell never
+  // changes, so neighbours never shift.
+  static getGridOptions() { return { columns: 12, min_columns: 4, rows: "auto", min_rows: 2 }; }
+  getGridOptions() { return SbEntityBrowser.getGridOptions(); }
+
+  // true when the card must fill a fixed-height container (a grid cell with
+  // fixed rows, or the pop-out dialog)
+  get _fill() {
+    const rows = this._config?.grid_options?.rows;
+    return this._popFill || (typeof rows === "number" && rows > 0);
+  }
+
   // This card knows nothing about the URL. To drive it from a dropdown, wrap
   // it in an SB Param Card and put the parameter INSIDE a pattern: words in
   // one pattern are ANDed, so "fp300 $q$" is the base word plus the chosen
@@ -269,6 +285,7 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._popDlg) { try { this._popDlg.close(); } catch (e) { /* closed */ } this._popDlg.remove(); this._popDlg = null; this._pop = null; }
     this._unsubscribeFilter();
     this._subKey = null;
     clearInterval(this._tick);
@@ -385,7 +402,7 @@ class SbEntityBrowser extends HTMLElement {
         this._storeKey,
         JSON.stringify({ states: [...this._selected], min: this._min, max: this._max,
                          diag: this._diag, bsel: [...this._bsel], coll: [...this._coll],
-                         gsel: this._gsel })
+                         gsel: this._gsel, collapsed: !!this._collapsed })
       );
     } catch (e) {
       /* private mode etc. — filter just won't persist */
@@ -468,6 +485,8 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _render() {
+    if (this._popDlg) { this._dirty = true; return; }      // never rebuild under the pop-out (it lives in this shadow root)
+    this._dirty = false;
     this._lastRender = Date.now();
     this._sig = this._signature();
     const h = this._hass;
@@ -600,10 +619,13 @@ class SbEntityBrowser extends HTMLElement {
     const togglable = shownIds.filter((id) => canToggle(h, id));
     // Absolute ceiling on top of the row cap: the list never exceeds 70% of
     // the viewport, whatever list_rows and row heights add up to.
-    const scrolls = rows.length > listRows;
-    const listStyle = scrolls
-      ? `max-height:min(${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em, 70vh); overflow-y:auto;`
-      : `max-height:70vh; overflow-y:auto;`;
+    const fill = this._fill;
+    const scrolls = fill || rows.length > listRows;
+    const listStyle = fill
+      ? `flex:1; min-height:0; overflow-y:auto;`
+      : scrolls
+        ? `max-height:min(${(listRows * (this._diag ? 4.3 : 3.6)).toFixed(1)}em, 70vh); overflow-y:auto;`
+        : `max-height:70vh; overflow-y:auto;`;
 
     const compact = cfg.density === "compact";
     const pill = cfg.state_style === "pill";
@@ -691,7 +713,16 @@ class SbEntityBrowser extends HTMLElement {
     const keepScroll = this.shadowRoot.querySelector(".list")?.scrollTop || 0;
     this.shadowRoot.innerHTML = `
       <style>
-        ha-card { padding: 12px 16px 8px; }
+        :host { display: block; height: 100%; }
+        ha-card { padding: 12px 16px 8px; box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
+        ha-card > * { flex: none; }
+        ha-card > .list { flex: 1 1 auto; }
+        ha-card.collapsed > :not(.header) { display: none !important; }
+        .hbtn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
+        .hbtn:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .08); }
+        dialog.sebpop { border: none; border-radius: 12px; padding: 0; width: min(960px, 94vw); height: min(90vh, 1400px); background: transparent; box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden; }
+        dialog.sebpop::backdrop { background: rgba(0,0,0,.5); }
+        dialog.sebpop sb-entity-browser { display: block; height: 100%; }
         .header { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 1.2em; font-weight: 500; flex: 1; color: var(--primary-text-color); }
         .count { color: var(--secondary-text-color); font-size: .85em; }
@@ -759,10 +790,13 @@ class SbEntityBrowser extends HTMLElement {
         .empty ha-icon { --mdc-icon-size: 32px; opacity: .5; }
         .note { color: var(--secondary-text-color); font-style: italic; font-size: .8em; padding: 4px 0; }
       </style>
-      <ha-card>
+      <ha-card class="${this._collapsed ? "collapsed" : ""}">
         <div class="header">
+          ${cfg.popout === false || this._popFill ? "" : ""}
+          <ha-icon class="hbtn collapse" icon="${this._collapsed ? "mdi:chevron-right" : "mdi:chevron-down"}" title="${this._collapsed ? "Show the entries" : "Hide the entries"}"></ha-icon>
           <div class="title">${esc(cfg.title || "")}</div>
           <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
+          ${this._popFill ? `<ha-icon class="hbtn popclose" icon="mdi:close" title="Close"></ha-icon>` : cfg.popout === false ? "" : `<ha-icon class="hbtn popout" icon="mdi:arrow-expand-all" title="Open full size"></ha-icon>`}
           ${cfg.show_group_selector
             ? `<select class="gsel" title="Group by">${["none", "floor", "area", "state", "domain", "label"]
                 .map((g) => `<option value="${g}" ${g === (groupBy || "none") ? "selected" : ""}>${g === "none" ? "No grouping" : g[0].toUpperCase() + g.slice(1)}</option>`)
@@ -867,6 +901,12 @@ class SbEntityBrowser extends HTMLElement {
         rerender();
       });
     });
+    const colBtn = this.shadowRoot.querySelector(".collapse");
+    if (colBtn) colBtn.addEventListener("click", () => { this._collapsed = !this._collapsed; this._persist(); this._sig = ""; this._render(); });
+    const popBtn = this.shadowRoot.querySelector(".popout");
+    if (popBtn) popBtn.addEventListener("click", () => this._openPopout());
+    const popClose = this.shadowRoot.querySelector(".popclose");
+    if (popClose) popClose.addEventListener("click", () => fire(this, "seb-popout-close", {}));
     const tallBtn = this.shadowRoot.querySelector(".tall-btn");
     if (tallBtn) tallBtn.addEventListener("click", () => this._toggleAll(togglable, shownIds.length));
     const diagBtn = this.shadowRoot.querySelector(".diag-btn");
@@ -908,7 +948,7 @@ class SbEntityBrowser extends HTMLElement {
       const keep = this._keepScroll; this._keepScroll = 0;
       requestAnimationFrame(() => {
         const r0 = listEl?.querySelector(".row");
-        if (r0?.offsetHeight)
+        if (r0?.offsetHeight && !fill)
           listEl.style.maxHeight = `min(${r0.offsetHeight * listRows}px, 70vh)`;
         // Right after innerHTML the list measured 0×0 and a scrollTop set then
         // was clamped to 0; now that rows have a height, put the scroll back.
@@ -1004,6 +1044,27 @@ class SbEntityBrowser extends HTMLElement {
       });
     }
     document.body.appendChild(d);
+    d.showModal();
+  }
+
+  // A full-size copy of this card in a modal: same config (so the same stored
+  // chips/search/grouping), sized to the viewport, its own subscription while
+  // open. Inside this shadow root (HA's pickers need the app's contexts) —
+  // hence the _render() guard above while it is open.
+  _openPopout() {
+    if (this._popDlg) return;
+    const d = document.createElement("dialog"); d.className = "sebpop";
+    const inner = document.createElement("sb-entity-browser");
+    inner._popFill = true;
+    inner.setConfig({ ...this._config, list_rows: 500, grid_options: undefined, popout: false });
+    inner.hass = this._hass;
+    d.appendChild(inner);
+    this.shadowRoot.appendChild(d);
+    this._popDlg = d; this._pop = inner;
+    const close = () => { try { d.close(); } catch (e) { /* closed */ } d.remove(); this._popDlg = null; this._pop = null; if (this._dirty) this._render(); };
+    d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+    d.addEventListener("click", (e) => { if (e.target === d) close(); });     // backdrop click
+    inner.addEventListener("seb-popout-close", close);
     d.showModal();
   }
 
@@ -1173,7 +1234,7 @@ const LABELS = {
   density: "Density", group_by: "Group by", show_search: "Show search box",
   show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
-  icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button",
+  icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button", popout: "Show the full-size (pop-out) button",
   states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
   device_classes: "Device classes", units: "Units", state_for: "In current state for",
   rule: "SB Watch rule (Count sensor)", rate: "Rate of change", rate_window: "Rate window",
@@ -1386,6 +1447,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       ["Tap action", esc((a.action || "more-info").replace(/[-_]/g, " ")) + (a.navigation_path ? ` <code>${esc(a.navigation_path)}</code>` : "") + (a.perform_action || a.service ? ` <code>${esc(a.perform_action || a.service)}</code>` : "")],
       ["Icon tap action", c.icon_tap_action?.action && c.icon_tap_action.action !== "none" ? esc(c.icon_tap_action.action.replace(/[-_]/g, " ")) : `<span class="off">same as row</span>`],
       ["Toggle-all button", on(c.toggle_all_button)],
+      ["Pop-out button", c.popout === false ? `<span class="off">off</span>` : "on"],
     ];
   }
 
@@ -1587,6 +1649,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "tap_action", selector: { ui_action: {} } },
         { name: "icon_tap_action", selector: { ui_action: {} } },
         { name: "toggle_all_button", selector: { boolean: {} } },
+        { name: "popout", selector: { boolean: {} } },
       ], (v) => this._set(v, true));
       body.appendChild(this._form);
     }
