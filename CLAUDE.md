@@ -505,3 +505,10 @@ Chevron moved to the right beside ⤢ as a bordered round button
 set by the pop-out AND by a wrapper in a fixed cell) and `_isPopout`
 (✕ instead of ⤢, no chevron). Param Card 0.12.0 passes fixed Layout rows
 through (`getGridOptions`, host flex column + child flex + `_forceFill`).
+
+## v0.29.0 — collapsed keeps the chips (2026-09-29)
+
+User: "when collapsed, show title AND chips with state". The collapsed
+rule is now `ha-card.collapsed > :not(.header):not(.chips)` — the chip
+row (state counts, still tappable) stays; search box, list and notes
+hide. Collapsed Occupancy card = 92 px (header + chips).

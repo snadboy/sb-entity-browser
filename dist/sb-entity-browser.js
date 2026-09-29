@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.28.0";
+const VERSION = "0.29.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -719,7 +719,8 @@ class SbEntityBrowser extends HTMLElement {
         ha-card { padding: 12px 16px 8px; box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
         ha-card > * { flex: none; }
         ha-card > .list { flex: 1 1 auto; }
-        ha-card.collapsed > :not(.header) { display: none !important; }
+        /* Collapsed = title + chips stay (the chips still say what the states are); entries, search and notes go. */
+        ha-card.collapsed > :not(.header):not(.chips) { display: none !important; }
         .hbtn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 22px; padding: 3px; border-radius: 50%; border: 1px solid var(--divider-color); }
         .hbtn:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .08); }
         dialog.sebpop { border: none; border-radius: 12px; padding: 0; width: min(960px, 94vw); height: min(90vh, 1400px); background: transparent; box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden; }
