@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.25.0";
+const VERSION = "0.26.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -262,11 +262,9 @@ class SbEntityBrowser extends HTMLElement {
       this._subscribe();                       // SB Filter pushes state_for changes itself; no local tick for it
     }
     this._tick = setInterval(() => {
-      const needs = this._diag || (this._config?.secondary || []).some((f) => f.startsWith("last_"));
-      if (needs && this._hass && this._config && !this._searchFocus) {
-        this._sig = "";
-        this._render();
-      }
+      // "20m ago" texts only: update them in place. A full rebuild every minute
+      // threw away the list's scroll position and re-created every row.
+      if (this._hass && this._config && !this._searchFocus) this._refreshTimes();
     }, 60000);
   }
 
@@ -402,6 +400,18 @@ class SbEntityBrowser extends HTMLElement {
     const h = this._hass;
     const dev = h.devices?.[h.entities?.[id]?.device_id];
     return dev?.name_by_user || dev?.name || "";
+  }
+
+  _refreshTimes() {
+    const h = this._hass;
+    for (const row of this.shadowRoot.querySelectorAll(".row")) {
+      const st = h.states[row.dataset.entity];
+      if (!st) continue;
+      const sec = row.querySelector(".sec");
+      if (sec) { const v = this._secondaryText(row.dataset.entity, st); if (sec.textContent !== v) sec.textContent = v; }
+      const dl = row.querySelector(".diag-line");
+      if (dl) dl.textContent = `${row.dataset.entity} · raw ${st.state} · updated ${relTime(st.last_updated)}`;
+    }
   }
 
   _secondaryText(id, st) {
@@ -678,6 +688,7 @@ class SbEntityBrowser extends HTMLElement {
       (filtered ? `<div class="clear-all" role="button" tabindex="0">Clear filters</div>` : "") +
       `</div>`;
 
+    const keepScroll = this.shadowRoot.querySelector(".list")?.scrollTop || 0;
     this.shadowRoot.innerHTML = `
       <style>
         ha-card { padding: 12px 16px 8px; }
@@ -779,6 +790,7 @@ class SbEntityBrowser extends HTMLElement {
         <div class="list ${this._animate ? "anim" : ""}" style="${listStyle}">${rowsHtml || emptyHtml}</div>
         ${capped ? `<div class="note">List capped at ${renderCap} — narrow the filter (diagnostics shows all)</div>` : ""}
       </ha-card>`;
+    this._keepScroll = keepScroll;      // restored once the new list has a height (see the rAF below)
     this._animate = false;
 
     // Wire up
@@ -893,12 +905,16 @@ class SbEntityBrowser extends HTMLElement {
     }
     if (scrolls) {
       const listEl = this.shadowRoot.querySelector(".list");
+      const keep = this._keepScroll; this._keepScroll = 0;
       requestAnimationFrame(() => {
         const r0 = listEl?.querySelector(".row");
         if (r0?.offsetHeight)
           listEl.style.maxHeight = `min(${r0.offsetHeight * listRows}px, 70vh)`;
+        // Right after innerHTML the list measured 0×0 and a scrollTop set then
+        // was clamped to 0; now that rows have a height, put the scroll back.
+        if (keep && listEl && listEl.isConnected) listEl.scrollTop = keep;
       });
-    }
+    } else this._keepScroll = 0;
     // Jinja secondary info: subscriptions exist ONLY for rows actually ON
     // SCREEN — an IntersectionObserver subscribes rows as they scroll into
     // view (the scroll container, or the page viewport for the card itself)

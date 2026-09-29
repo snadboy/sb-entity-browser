@@ -458,3 +458,19 @@ grammar v3), the State match form and the overview ("Rate `>0.5/h` OR
 ## v0.25.0 (2026-09-28)
 
 The subscription carries `origin: "card: <title|storage_id>"` so SB Filter's `sensor.sb_filter_live_filters` names the card.
+
+## v0.26.0 — no more minute-tick rebuild (2026-09-28)
+
+User: the wrapped browser "jitters when the background cards update" (in
+the Param Card editor preview). Measured: on the live dashboard 0 renders
+in 40 s; in the editor preview exactly 1 forced render in 75 s — the
+60-s tick that refreshed "20m ago" by setting `_sig = ""` and rebuilding
+the whole list (scroll reset to 0, every row re-created and fade-animated
+when `_animate`). Now `_refreshTimes()` rewrites `.sec` / `.diag-line`
+text in place on the tick, and `_render()` preserves the list's scrollTop
+across a genuine rebuild. Probe scripts: `jitter_probe.js`,
+`jitter_editor_probe.js`, `scroll_test.js`.
+Scroll restore detail: right after `innerHTML` the new `.list` measures
+0×0, so a scrollTop set there is clamped to 0 — the restore lives in the
+existing post-layout `requestAnimationFrame` that sets the px max-height
+(`_keepScroll`). Verified: forced rebuild keeps 250; tick = 0 renders.
