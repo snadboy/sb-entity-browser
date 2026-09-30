@@ -512,3 +512,18 @@ User: "when collapsed, show title AND chips with state". The collapsed
 rule is now `ha-card.collapsed > :not(.header):not(.chips)` — the chip
 row (state counts, still tappable) stays; search box, list and notes
 hide. Collapsed Occupancy card = 92 px (header + chips).
+
+## v0.30.0 — group distribution bars (2026-09-30)
+
+`group_bar: auto|states|power` (Display group). Groups are sliced first,
+then each gets a bar: **power** = per-entity watts (`powerSensorFor`: the
+entity's own W/kW reading, else — for CONSUMER domains only (switch, light,
+fan, climate, media_player…) — the power sensor on its device that carries
+its stem, or the device's only one; the sb.jinja `sb_outlet` rule), deduped
+by sensor within the group (a switch + its own power sensor count once),
+0 W kept (an idle fridge is still a power group), segment widths vs the
+LARGEST group's total, `.gval` shows the total; **states** = share of each
+formatted state, on/off/unavailable/unknown in HA's colours, other states
+from a palette by first appearance. `_powerMap` (row → sensor) folds the
+borrowed sensors into `_signature()` so a wattage change re-renders.
+Demos: Samples → State Match ⑧.

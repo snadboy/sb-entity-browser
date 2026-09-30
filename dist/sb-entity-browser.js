@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.29.0";
+const VERSION = "0.30.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -124,6 +124,50 @@ const esc = (v) =>
 // built-in card makes. Cached per entity+state because the search box and display run it for
 // the whole estate on every hass tick; capped because numeric sensors mint a
 // new key on every reading.
+// ---- group distribution bars ------------------------------------------------
+// The watts that stand for an entity: its own state when it is a power sensor,
+// else the power sensor on its device that carries its stem — the same rule as
+// sb.jinja's sb_outlet (a P316M strip is ONE device with six outlets; a single
+// outlet's device has one power sensor, whatever it is called).
+const isPowerSensor = (id, st) => id.startsWith("sensor.") && !!st &&
+  (st.attributes.device_class === "power" || st.attributes.unit_of_measurement === "W" || st.attributes.unit_of_measurement === "kW");
+const powerIndex = (h) => {
+  const byDev = new Map();
+  for (const id in h.entities || {}) {
+    const dev = h.entities[id]?.device_id;
+    if (!dev || !isPowerSensor(id, h.states[id])) continue;
+    if (!byDev.has(dev)) byDev.set(dev, []);
+    byDev.get(dev).push(id);
+  }
+  return byDev;
+};
+// Only a consumer (the thing plugged in) borrows its device's power sensor —
+// a voltage sensor, a power-on-behavior select or a firmware entity on the
+// same plug must not count the plug's watts again.
+const CONSUMER_DOMAINS = new Set(["switch", "light", "fan", "climate", "media_player", "humidifier", "water_heater", "vacuum"]);
+const powerSensorFor = (h, id, byDev) => {
+  if (isPowerSensor(id, h.states[id])) return id;
+  if (!CONSUMER_DOMAINS.has(id.split(".")[0])) return null;
+  const cands = byDev.get(h.entities?.[id]?.device_id);
+  if (!cands?.length) return null;
+  if (cands.length === 1) return cands[0];
+  const stem = id.split(".")[1] + "_";
+  return cands.find((c) => c.split(".")[1].startsWith(stem)) || null;
+};
+const wattsOf = (h, sid) => {
+  const st = sid && h.states[sid];
+  const v = parseFloat(st?.state);
+  if (Number.isNaN(v)) return null;
+  return st.attributes.unit_of_measurement === "kW" ? v * 1000 : v;
+};
+const fmtWatts = (w) => (w >= 1000 ? `${(w / 1000).toFixed(w >= 10000 ? 0 : 1)} kW` : `${w < 10 ? w.toFixed(1) : Math.round(w)} W`);
+// on/off/unavailable/unknown keep HA's meaning-colours; every other state
+// takes the next palette entry in order of first appearance (so "Clear" is
+// the same colour in every group).
+const STATE_COLORS = { on: "var(--state-active-color, var(--primary-color))", off: "var(--disabled-color, #9e9e9e)",
+                       unavailable: "var(--error-color, #db4437)", unknown: "var(--warning-color, #ffa600)" };
+const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"];
+
 const fmtCache = new Map();
 const fmtState = (hass, st) => {
   const a = st.attributes || {};
@@ -389,7 +433,8 @@ class SbEntityBrowser extends HTMLElement {
     let n = 0;
     for (const id of this._matches()) {
       const st = h.states[id];
-      const s = id + st.state + st.last_updated;
+      const ps = this._powerMap?.get(id);   // a group bar shows this entity's power sensor too
+      const s = id + st.state + st.last_updated + (ps ? h.states[ps]?.state : "");
       for (let i = 0; i < s.length; i++) acc = (acc * 31 + s.charCodeAt(i)) | 0;
       n++;
     }
@@ -682,18 +727,79 @@ class SbEntityBrowser extends HTMLElement {
 
     let rowsHtml = "";
     const groupKeys = [];
+    this._powerMap = null;
     if (groupBy) {
+      // slice the (group-sorted) rows into groups first: the distribution
+      // bars need every group's total before any header is drawn
+      const groups = [];
       let i = 0;
       while (i < rows.length) {
         const g = groupOf(rows[i][0], rows[i][1], rows[i][2]);
-        groupKeys.push(g);
         let j = i;
         while (j < rows.length && groupOf(rows[j][0], rows[j][1], rows[j][2]) === g) j++;
-        const coll = this._coll.has(g);
-        rowsHtml += `<div class="grp" data-g="${esc(g)}"><ha-icon icon="mdi:chevron-${coll ? "right" : "down"}"></ha-icon>${esc(g)}<span class="n">${j - i}</span></div>`;
-        if (!coll) rowsHtml += rows.slice(i, j).map(rowHtml).join("");
+        groups.push({ g, slice: rows.slice(i, j) });
         i = j;
       }
+      // group_bar: "states" = share of each state in the group; "power" = the
+      // group's watts vs the largest group, split per entity; "auto" = power
+      // where the group has any, else states.
+      const barMode = ["auto", "states", "power"].includes(cfg.group_bar) ? cfg.group_bar : null;
+      let bars = null;
+      if (barMode) {
+        const byDev = barMode === "states" ? null : powerIndex(h);
+        if (byDev) this._powerMap = new Map();
+        const colorOf = new Map();
+        const stateColor = (st) => {
+          const raw = st.state, f = fmtState(h, st);
+          if (STATE_COLORS[raw]) return STATE_COLORS[raw];
+          if (!colorOf.has(f)) colorOf.set(f, PALETTE[colorOf.size % PALETTE.length]);
+          return colorOf.get(f);
+        };
+        bars = groups.map(({ slice }) => {
+          if (byDev) {
+            const parts = [];
+            const seen = new Set();   // a switch and its own power sensor in one group count once
+            for (const [id, st] of slice) {
+              const sid = powerSensorFor(h, id, byDev);
+              if (!sid || seen.has(sid)) continue;
+              seen.add(sid);
+              this._powerMap.set(id, sid);
+              const w = wattsOf(h, sid);
+              if (w != null) parts.push({ id, st, w });   // 0 W is still a reading (an idle fridge)
+            }
+            if (parts.length) {
+              parts.sort((a, b) => b.w - a.w);
+              return { kind: "power", parts, total: parts.reduce((a, p) => a + p.w, 0) };
+            }
+            if (barMode === "power") return null;
+          }
+          const counts = new Map();
+          for (const [, st] of slice) {
+            const f = fmtState(h, st);
+            const c = counts.get(f) || { n: 0, color: stateColor(st) };
+            c.n++; counts.set(f, c);
+          }
+          return { kind: "states", counts: [...counts].sort((a, b) => b[1].n - a[1].n), n: slice.length };
+        });
+        const maxW = Math.max(0, ...bars.map((b) => (b?.kind === "power" ? b.total : 0)));
+        bars = bars.map((b) => {
+          if (!b) return "";
+          if (b.kind === "power") {
+            const segs = b.parts.filter((p) => p.w > 0).map((p, k) => `<i style="width:${(100 * p.w / maxW).toFixed(2)}%;background:${PALETTE[k % PALETTE.length]}"></i>`).join("");
+            const tip = b.parts.slice(0, 8).map((p) => `${name(p.id, p.st)} ${fmtWatts(p.w)}`).join(" · ") + (b.parts.length > 8 ? " · …" : "");
+            return `<span class="gbar" title="${esc(tip)}">${segs}</span><span class="gval">${fmtWatts(b.total)}</span>`;
+          }
+          const segs = b.counts.map(([, c]) => `<i style="width:${(100 * c.n / b.n).toFixed(2)}%;background:${c.color}"></i>`).join("");
+          const tip = b.counts.map(([f, c]) => `${f} ${c.n}`).join(" · ");
+          return `<span class="gbar" title="${esc(tip)}">${segs}</span>`;
+        });
+      }
+      groups.forEach(({ g, slice }, k) => {
+        groupKeys.push(g);
+        const coll = this._coll.has(g);
+        rowsHtml += `<div class="grp" data-g="${esc(g)}"><ha-icon icon="mdi:chevron-${coll ? "right" : "down"}"></ha-icon>${esc(g)}${bars?.[k] || ""}<span class="n">${slice.length}</span></div>`;
+        if (!coll) rowsHtml += slice.map(rowHtml).join("");
+      });
     } else {
       rowsHtml = rows.map(rowHtml).join("");
     }
@@ -766,6 +872,12 @@ class SbEntityBrowser extends HTMLElement {
                padding: 10px 0 2px; color: var(--secondary-text-color); font-size: .78em;
                font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
         .grp .n { opacity: .6; font-weight: 400; }
+        .gbar { margin-left: auto; width: 140px; max-width: 40%; height: 8px; display: flex; border-radius: 4px;
+                overflow: hidden; background: var(--divider-color); flex: 0 0 auto; }
+        .gbar i { display: block; height: 100%; }
+        .gbar i + i { margin-left: 1px; }
+        .gval { font-weight: 400; text-transform: none; letter-spacing: 0; min-width: 4em; text-align: right; }
+        .gbar:not(:has(+ .gval)) { margin-right: 4px; }
         .grp ha-icon { --mdc-icon-size: 16px; }
         .row { display: flex; align-items: center; gap: 12px; padding: 7px 0; cursor: pointer; border-radius: 8px; }
         .row.cmp { padding: 3px 0; }
@@ -1235,7 +1347,7 @@ const LABELS = {
   title: "Title", labels: "Labels", areas: "Areas",
   secondary: "Secondary info fields", sort: "Sort by", sort_dir: "Sort direction",
   secondary_template: "Jinja secondary line", buckets: "Numeric buckets", state_style: "State display",
-  density: "Density", group_by: "Group by", show_search: "Show search box", fixed_size: "Fixed height (always Max visible rows tall)",
+  density: "Density", group_by: "Group by", group_bar: "Group bars (distribution on each group header)", show_search: "Show search box", fixed_size: "Fixed height (always Max visible rows tall)",
   show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button", popout: "Show the full-size (pop-out) button",
@@ -1263,9 +1375,11 @@ const HELPERS = {
   secondary_template: "Jinja, rendered live per VISIBLE row only; entity_id holds the row's entity. Example: {{ states(entity_id) }} in {{ area_name(entity_id) }}",
   buckets: "Comma-separated thresholds for numeric sets, e.g. 20, 50 → chips <20 · 20–50 · >50. Empty = min/max inputs.",
   show_search: "A word-query box on the card, refining the list (matches ids and friendly names).",
+  group_bar: "A stacked bar on every group header. Power: each entity's watts (its own reading, or its outlet's power sensor), bar length = the group's total vs the largest group. States: the share of each state in the group. Auto picks power where the group has any.",
   show_group_selector: "Lets the viewer switch grouping; their choice sticks per browser and overrides the Group by default.",
 };
 const OPT = {
+  group_bar: [["none", "Off"], ["auto", "Power where the group has any, else state counts"], ["states", "State counts"], ["power", "Power only"]],
   group_by: [["none", "No grouping"], ["floor", "Floor"], ["area", "Area"], ["state", "State"], ["domain", "Domain"], ["label", "Label"]],
   density: [["comfortable", "Comfortable (two lines)"], ["compact", "Compact (one line)"]],
   state_style: [["text", "Text"], ["pill", "Pill"]],
@@ -1436,6 +1550,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       ["Secondary", sec.length ? esc(sec.join(", ")) : `<span class="off">none</span>`],
       ...(c.secondary_template ? [["Jinja line", `<code>${esc(String(c.secondary_template).slice(0, 48))}${String(c.secondary_template).length > 48 ? "…" : ""}</code>`]] : []),
       ["Group by", optLabel("group_by", c.group_by, "none")],
+      ...(c.group_bar && c.group_bar !== "none" ? [["Group bars", optLabel("group_bar", c.group_bar, "none")]] : []),
       ["Sort", `${optLabel("sort", c.sort, "name")} ${optLabel("sort_dir", c.sort_dir, "asc").toLowerCase()}`],
       ["Fixed height", c.fixed_size ? "on" : `<span class="off">off</span>`],
       ["Rows shown", `${c.list_rows || 10}${c.buckets ? ` · buckets ${esc(c.buckets)}` : ""}`],
@@ -1642,7 +1757,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         { name: "title", selector: { text: {} } },
         { name: "secondary", selector: { select: { multiple: true, mode: "dropdown", options: SECONDARY_OPTIONS } } },
         { name: "secondary_template", selector: { text: { multiline: true } } },
-        sel("group_by"), sel("density"), sel("state_style"), sel("sort"), sel("sort_dir"),
+        sel("group_by"), sel("group_bar"), sel("density"), sel("state_style"), sel("sort"), sel("sort_dir"),
         { name: "list_rows", selector: { number: { min: 3, max: 50, mode: "box" } } },
         { name: "fixed_size", selector: { boolean: {} } },
         { name: "buckets", selector: { text: {} } },
