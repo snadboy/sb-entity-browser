@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.30.1";
+const VERSION = "0.30.2";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -275,6 +275,13 @@ class SbEntityBrowser extends HTMLElement {
     // every tick and saturates the main thread (the editor's Save click
     // never gets processed).
     if (this._renderQueued) return;
+    // Power bars borrow sensors that are NOT rows; their ticks patch the bars
+    // in place. A full rebuild per wattage tick (0.30.0/0.30.1) re-ran the
+    // template reconcile before layout and dropped every Jinja subscription.
+    if (this._powerMap?.size) {
+      const ps = this._powerSig();
+      if (ps !== this._lastPowerSig) { this._lastPowerSig = ps; this._refreshBars(); }
+    }
     if (this._sig && this._signature() === this._sig) return;
     const since = Date.now() - this._lastRender;
     if (since >= 1000) {
@@ -424,6 +431,79 @@ class SbEntityBrowser extends HTMLElement {
     this._subPending = false;
   }
 
+  // One group's distribution bar (HTML), from the ids it holds. Power: each
+  // entity's watts (its own reading or its outlet's sensor from _powerMap),
+  // a switch and its own sensor counted once, 0 W kept; segments in
+  // descending watts, each in the entity's colour — assigned by POSITION in
+  // the group so a row's legend dot never changes when the ranking does.
+  // States: the share of each formatted state. Called at render and again
+  // in place by _refreshBars when a borrowed reading moves.
+  _groupBar(ids) {
+    const h = this._hass;
+    if (this._barMode !== "states" && this._powerMap) {
+      const parts = [];
+      const seen = new Set();
+      ids.forEach((id, k) => {
+        const sid = this._powerMap.get(id);
+        if (!sid || seen.has(sid)) return;
+        seen.add(sid);
+        const w = wattsOf(h, sid);
+        if (w == null) return;
+        if (!this._segColor.has(id)) this._segColor.set(id, PALETTE[k % PALETTE.length]);
+        parts.push({ id, w });
+      });
+      if (parts.length) {
+        parts.sort((a, b) => b.w - a.w);
+        const total = parts.reduce((a, p) => a + p.w, 0);
+        const segs = total > 0 ? parts.filter((p) => p.w > 0).map((p) => `<i style="width:${(100 * p.w / total).toFixed(2)}%;background:${this._segColor.get(p.id)}"></i>`).join("") : "";
+        const tip = parts.slice(0, 8).map((p) => `${h.states[p.id]?.attributes.friendly_name || p.id} ${fmtWatts(p.w)}`).join(" · ") + (parts.length > 8 ? " · …" : "");
+        return `<span class="gbar" title="${esc(tip)}">${segs}</span><span class="gval">${fmtWatts(total)}</span>`;
+      }
+      if (this._barMode === "power") return "";
+    }
+    const counts = new Map();
+    for (const id of ids) {
+      const st = h.states[id];
+      if (!st) continue;
+      const f = fmtState(h, st);
+      let c = counts.get(f);
+      if (!c) { c = { n: 0, color: this._stateColor(st) }; counts.set(f, c); }
+      c.n++;
+      this._segColor.set(id, c.color);
+    }
+    const n = ids.length;
+    const sorted = [...counts].sort((a, b) => b[1].n - a[1].n);
+    const segs = sorted.map(([, c]) => `<i style="width:${(100 * c.n / n).toFixed(2)}%;background:${c.color}"></i>`).join("");
+    const tip = sorted.map(([f, c]) => `${f} ${c.n}`).join(" · ");
+    return `<span class="gbar" title="${esc(tip)}">${segs}</span>`;
+  }
+
+  _stateColor(st) {
+    if (STATE_COLORS[st.state]) return STATE_COLORS[st.state];
+    const f = fmtState(this._hass, st);
+    if (!this._stateColors.has(f)) this._stateColors.set(f, PALETTE[this._stateColors.size % PALETTE.length]);
+    return this._stateColors.get(f);
+  }
+
+  _powerSig() {
+    const h = this._hass;
+    let acc = 0;
+    for (const sid of this._powerMap.values()) { const v = h.states[sid]?.state || ""; for (let i = 0; i < v.length; i++) acc = (acc * 31 + v.charCodeAt(i)) | 0; }
+    return acc;
+  }
+
+  // Patch every group header's bar + total in place; rows are untouched.
+  _refreshBars() {
+    if (!this._barGroups || !this.shadowRoot) return;
+    const heads = new Map([...this.shadowRoot.querySelectorAll(".grp")].map((e) => [e.dataset.g, e]));
+    for (const { g, ids } of this._barGroups) {
+      const el = heads.get(g);
+      if (!el) continue;
+      el.querySelectorAll(".gbar, .gval").forEach((x) => x.remove());
+      el.querySelector(".n")?.insertAdjacentHTML("beforebegin", this._groupBar(ids));
+    }
+  }
+
   _signature() {
     // Rolling hash instead of a joined string: a broad pattern matching
     // thousands of entities would otherwise allocate a ~100 KB string on
@@ -433,8 +513,7 @@ class SbEntityBrowser extends HTMLElement {
     let n = 0;
     for (const id of this._matches()) {
       const st = h.states[id];
-      const ps = this._powerMap?.get(id);   // a group bar shows this entity's power sensor too
-      const s = id + st.state + st.last_updated + (ps ? h.states[ps]?.state : "");
+      const s = id + st.state + st.last_updated;
       for (let i = 0; i < s.length; i++) acc = (acc * 31 + s.charCodeAt(i)) | 0;
       n++;
     }
@@ -746,57 +825,17 @@ class SbEntityBrowser extends HTMLElement {
       // where the group has any, else states.
       const barMode = ["auto", "states", "power"].includes(cfg.group_bar) ? cfg.group_bar : null;
       let bars = null;
+      this._barGroups = null;
       if (barMode) {
         const byDev = barMode === "states" ? null : powerIndex(h);
-        if (byDev) this._powerMap = new Map();
+        this._powerMap = byDev ? new Map() : null;
         this._segColor = new Map();
-        const colorOf = new Map();
-        const stateColor = (st) => {
-          const raw = st.state, f = fmtState(h, st);
-          if (STATE_COLORS[raw]) return STATE_COLORS[raw];
-          if (!colorOf.has(f)) colorOf.set(f, PALETTE[colorOf.size % PALETTE.length]);
-          return colorOf.get(f);
-        };
-        bars = groups.map(({ slice }) => {
-          if (byDev) {
-            const parts = [];
-            const seen = new Set();   // a switch and its own power sensor in one group count once
-            for (const [id, st] of slice) {
-              const sid = powerSensorFor(h, id, byDev);
-              if (!sid || seen.has(sid)) continue;
-              seen.add(sid);
-              this._powerMap.set(id, sid);
-              const w = wattsOf(h, sid);
-              if (w != null) parts.push({ id, st, w });   // 0 W is still a reading (an idle fridge)
-            }
-            if (parts.length) {
-              parts.sort((a, b) => b.w - a.w);
-              return { kind: "power", parts, total: parts.reduce((a, p) => a + p.w, 0) };
-            }
-            if (barMode === "power") return null;
-          }
-          const counts = new Map();
-          for (const [id, st] of slice) {
-            const f = fmtState(h, st);
-            const c = counts.get(f) || { n: 0, color: stateColor(st) };
-            c.n++; counts.set(f, c);
-            this._segColor.set(id, c.color);
-          }
-          return { kind: "states", counts: [...counts].sort((a, b) => b[1].n - a[1].n), n: slice.length };
-        });
-        bars = bars.map((b) => {
-          if (!b) return "";
-          if (b.kind === "power") {
-            // the bar is the group's distribution — full width; the number beside it is the magnitude
-            b.parts.forEach((p, k) => this._segColor.set(p.id, PALETTE[k % PALETTE.length]));
-            const segs = b.total > 0 ? b.parts.filter((p) => p.w > 0).map((p) => `<i style="width:${(100 * p.w / b.total).toFixed(2)}%;background:${this._segColor.get(p.id)}"></i>`).join("") : "";
-            const tip = b.parts.slice(0, 8).map((p) => `${name(p.id, p.st)} ${fmtWatts(p.w)}`).join(" · ") + (b.parts.length > 8 ? " · …" : "");
-            return `<span class="gbar" title="${esc(tip)}">${segs}</span><span class="gval">${fmtWatts(b.total)}</span>`;
-          }
-          const segs = b.counts.map(([, c]) => `<i style="width:${(100 * c.n / b.n).toFixed(2)}%;background:${c.color}"></i>`).join("");
-          const tip = b.counts.map(([f, c]) => `${f} ${c.n}`).join(" · ");
-          return `<span class="gbar" title="${esc(tip)}">${segs}</span>`;
-        });
+        this._stateColors = new Map();
+        this._barMode = barMode;
+        this._barGroups = groups.map(({ g, slice }) => ({ g, ids: slice.map(([id]) => id) }));
+        if (byDev) for (const { slice } of groups) for (const [id] of slice) { const sid = powerSensorFor(h, id, byDev); if (sid) this._powerMap.set(id, sid); }
+        bars = this._barGroups.map(({ ids }) => this._groupBar(ids));
+        this._lastPowerSig = this._powerMap ? this._powerSig() : null;
       }
       groups.forEach(({ g, slice }, k) => {
         groupKeys.push(g);
@@ -1242,11 +1281,17 @@ class SbEntityBrowser extends HTMLElement {
     if (!this.isConnected) return;
     const rootRect = rootEl ? rootEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     const want = new Set();
-    for (const r of this.shadowRoot.querySelectorAll(".row")) {
+    const rows = [...this.shadowRoot.querySelectorAll(".row")];
+    let laidOut = false;
+    for (const r of rows) {
       const b = r.getBoundingClientRect();
+      if (b.height) laidOut = true;
       if (b.height && b.bottom >= rootRect.top - 80 && b.top <= rootRect.bottom + 80)
         want.add(r.dataset.entity);
     }
+    // No geometry at all (detached, or mid-render before layout): nothing can
+    // be judged off-screen, so keep every subscription; the sweep re-judges.
+    if (rows.length && !laidOut) return;
     for (const id of this._tsubs.keys()) if (!want.has(id)) this._tplUnsub(id);
     for (const id of want) this._tplSub(id, tpl);
   }

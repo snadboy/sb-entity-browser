@@ -537,3 +537,19 @@ carries the magnitude. `_segColor` (row → colour) is filled while the bars
 are computed (power: palette index in descending-watts order; states: the
 state's colour) and `rowHtml` prefixes the name with a `.dot`. No dot =
 no reading (offline plug); 0 W = dot but no segment.
+
+## v0.30.2 — group bars refresh in place; Jinja lines survive (2026-09-30)
+
+REGRESSION in 0.30.0/0.30.1: with a power bar, borrowed power sensors sat
+in `_signature()`, so every wattage tick rebuilt the card (~1/s). Each
+rebuild ran `_reconcileTemplates` before layout (all rects 0) → `want`
+empty → every Jinja subscription dropped; the 5 s sweep never won the race.
+User: "the jinja secondary text no longer shows up".
+Fix: (1) power is OUT of the signature; the hass setter compares
+`_powerSig()` (hash of the borrowed sensors' states) and calls
+`_refreshBars()`, which rewrites `.gbar`/`.gval` per group header in place
+via `_groupBar(ids)` (shared with render); rows untouched. (2) colours are
+by POSITION in the group, so dots never change when the ranking does.
+(3) `_reconcileTemplates` returns early when rows exist but none has a
+height — nothing can be judged off-screen without layout.
+Verified: 12/12 Jinja lines filled with the bar on; 0 rebuilds in 2.5 s.
