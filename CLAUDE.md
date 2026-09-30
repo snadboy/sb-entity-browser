@@ -527,3 +527,13 @@ formatted state, on/off/unavailable/unknown in HA's colours, other states
 from a palette by first appearance. `_powerMap` (row → sensor) folds the
 borrowed sensors into `_signature()` so a wattage change re-renders.
 Demos: Samples → State Match ⑧.
+
+## v0.30.1 — full-width bars + legend dots (2026-09-30)
+
+User: "why is the top bar 50 % dark" — power bars were scaled against the
+largest group (magnitude + distribution in one), which read as a broken
+bar. Now every bar is the group's own distribution at full width; `.gval`
+carries the magnitude. `_segColor` (row → colour) is filled while the bars
+are computed (power: palette index in descending-watts order; states: the
+state's colour) and `rowHtml` prefixes the name with a `.dot`. No dot =
+no reading (offline plug); 0 W = dot but no segment.

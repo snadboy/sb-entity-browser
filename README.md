@@ -86,7 +86,7 @@ All options are in the visual editor. For reference:
 | `sort` | `name`, `state`, or `last_changed` |
 | `sort_dir` | `asc` (default) or `desc` |
 | **Collapse** | The chevron beside ⤢ hides the entries; the title, count and state chips stay, so a collapsed card still summarises its states |
-| `group_bar` | `auto` / `states` / `power`: a stacked distribution bar on every group header. Power = each entity's watts (its own reading, or its outlet's power sensor on the same device), bar length = the group's total vs the largest group, total shown; states = the share of each state. `auto` uses power where the group has any, else states |
+| `group_bar` | `auto` / `states` / `power`: a stacked distribution bar on every group header. Power = each entity's share of the group's watts (its own reading, or its outlet's power sensor on the same device), total shown beside the bar; states = the share of each state. Every row carries a dot in its segment's colour. `auto` uses power where the group has any, else states |
 | `fixed_size` | Keep the card as tall as `list_rows` even when fewer entities match, so neighbouring cards don't shift (any view) |
 | **Layout rows** | In a sections view, give the card fixed rows in its **Layout** tab and it fills that cell, the list scrolling inside — also when wrapped in an SB Param Card |
 | **Collapse** | The chevron in the header hides the entries (chips and list); remembered per browser |

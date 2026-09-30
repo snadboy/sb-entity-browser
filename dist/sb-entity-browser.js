@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.30.0";
+const VERSION = "0.30.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -716,7 +716,7 @@ class SbEntityBrowser extends HTMLElement {
         <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
           <span class="icon ph"></span>
           <div class="body">
-            <div class="name">${esc(name(id, st))}</div>
+            <div class="name">${this._segColor?.has(id) ? `<i class="dot" style="background:${this._segColor.get(id)}"></i>` : ""}${esc(name(id, st))}</div>
             ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
             ${tpl && !compact ? `<div class="jinja">${esc(this._tres.get(id) ?? "")}</div>` : ""}
             ${this._diag ? `<div class="diag-line">${esc(id)} · raw ${esc(st.state)} · updated ${esc(relTime(st.last_updated))}</div>` : ""}
@@ -728,6 +728,7 @@ class SbEntityBrowser extends HTMLElement {
     let rowsHtml = "";
     const groupKeys = [];
     this._powerMap = null;
+    this._segColor = null;   // row → its segment's colour (legend dots), when its group has a bar
     if (groupBy) {
       // slice the (group-sorted) rows into groups first: the distribution
       // bars need every group's total before any header is drawn
@@ -748,6 +749,7 @@ class SbEntityBrowser extends HTMLElement {
       if (barMode) {
         const byDev = barMode === "states" ? null : powerIndex(h);
         if (byDev) this._powerMap = new Map();
+        this._segColor = new Map();
         const colorOf = new Map();
         const stateColor = (st) => {
           const raw = st.state, f = fmtState(h, st);
@@ -774,18 +776,20 @@ class SbEntityBrowser extends HTMLElement {
             if (barMode === "power") return null;
           }
           const counts = new Map();
-          for (const [, st] of slice) {
+          for (const [id, st] of slice) {
             const f = fmtState(h, st);
             const c = counts.get(f) || { n: 0, color: stateColor(st) };
             c.n++; counts.set(f, c);
+            this._segColor.set(id, c.color);
           }
           return { kind: "states", counts: [...counts].sort((a, b) => b[1].n - a[1].n), n: slice.length };
         });
-        const maxW = Math.max(0, ...bars.map((b) => (b?.kind === "power" ? b.total : 0)));
         bars = bars.map((b) => {
           if (!b) return "";
           if (b.kind === "power") {
-            const segs = b.parts.filter((p) => p.w > 0).map((p, k) => `<i style="width:${(100 * p.w / maxW).toFixed(2)}%;background:${PALETTE[k % PALETTE.length]}"></i>`).join("");
+            // the bar is the group's distribution — full width; the number beside it is the magnitude
+            b.parts.forEach((p, k) => this._segColor.set(p.id, PALETTE[k % PALETTE.length]));
+            const segs = b.total > 0 ? b.parts.filter((p) => p.w > 0).map((p) => `<i style="width:${(100 * p.w / b.total).toFixed(2)}%;background:${this._segColor.get(p.id)}"></i>`).join("") : "";
             const tip = b.parts.slice(0, 8).map((p) => `${name(p.id, p.st)} ${fmtWatts(p.w)}`).join(" · ") + (b.parts.length > 8 ? " · …" : "");
             return `<span class="gbar" title="${esc(tip)}">${segs}</span><span class="gval">${fmtWatts(b.total)}</span>`;
           }
@@ -875,6 +879,7 @@ class SbEntityBrowser extends HTMLElement {
         .gbar { margin-left: auto; width: 140px; max-width: 40%; height: 8px; display: flex; border-radius: 4px;
                 overflow: hidden; background: var(--divider-color); flex: 0 0 auto; }
         .gbar i { display: block; height: 100%; }
+        .name .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 6px 1px 0; vertical-align: middle; }
         .gbar i + i { margin-left: 1px; }
         .gval { font-weight: 400; text-transform: none; letter-spacing: 0; min-width: 4em; text-align: right; }
         .gbar:not(:has(+ .gval)) { margin-right: 4px; }
