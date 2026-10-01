@@ -553,3 +553,11 @@ by POSITION in the group, so dots never change when the ranking does.
 (3) `_reconcileTemplates` returns early when rows exist but none has a
 height — nothing can be judged off-screen without layout.
 Verified: 12/12 Jinja lines filled with the bar on; 0 rebuilds in 2.5 s.
+
+## v0.30.3 — save-as-rule for sb_watch 0.9.0 (2026-10-01)
+
+SB Watch's flow changed shape (selection + triggers). The card now posts its
+whole filter as `advanced.filter_yaml` and a step 2 WITHOUT `triggers`: the
+integration absorbs what its form can express into chips and trigger rows
+(verified: states + state_for → two state rows "for 45m") and keeps the rest
+as YAML.
