@@ -561,3 +561,7 @@ whole filter as `advanced.filter_yaml` and a step 2 WITHOUT `triggers`: the
 integration absorbs what its form can express into chips and trigger rows
 (verified: states + state_for → two state rows "for 45m") and keeps the rest
 as YAML.
+
+## v0.30.4 — save-as-rule posts one step (2026-10-01)
+
+For sb_watch 0.10.0's one-page form: `{name, advanced: {filter_yaml, problem}, actions: {action: "none"}}`.

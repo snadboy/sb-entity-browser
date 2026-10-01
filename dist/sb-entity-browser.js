@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.30.3";
+const VERSION = "0.30.4";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -1680,12 +1680,11 @@ class SbEntityBrowserEditor extends HTMLElement {
     d.showModal(); input.focus(); input.select();
   }
 
-  // Drives SB Watch's two-step config flow (sb_watch ≥ 0.9.0). The card's whole
+  // Drives SB Watch's one-step config flow (sb_watch ≥ 0.10.0). The card's whole
   // filter goes in as the advanced YAML — JSON is YAML, so nothing is lost to
   // text-field conversions. SB Watch absorbs what its form can express into
   // selection chips and trigger rows (states → triggers with the time-in-state
-  // as their duration) and keeps the rest as YAML; a step-2 post WITHOUT
-  // `triggers` keeps the rows the flow derived.
+  // as their duration) and keeps the rest as YAML.
   async _createRule(name) {
     const hass = this._hass;
     const f = filterConfig(this._config);
@@ -1694,9 +1693,8 @@ class SbEntityBrowserEditor extends HTMLElement {
     try { flow = await hass.callApi("POST", "config/config_entries/flow", { handler: "sb_watch" }); }
     catch (e) { throw new Error("SB Watch integration not installed (or you are not an admin)"); }
     if (flow.type !== "form") throw new Error(`Unexpected flow reply: ${flow.type}${flow.reason ? " — " + flow.reason : ""}`);
-    const step2 = await hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { name, advanced: { filter_yaml: JSON.stringify(f), problem: true } });
-    if (step2.type !== "form" || step2.step_id !== "values") throw new Error(step2.errors ? `Rejected: ${JSON.stringify(step2.errors)}` : `Unexpected step ${step2.step_id}`);
-    const done = await hass.callApi("POST", `config/config_entries/flow/${step2.flow_id}`, { actions: { action: "none" } });
+    const done = await hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { name, advanced: { filter_yaml: JSON.stringify(f), problem: true }, actions: { action: "none" } });
+    if (done.type !== "create_entry") { try { await hass.callApi("DELETE", `config/config_entries/flow/${flow.flow_id}`); } catch (e) { /* already gone */ } }
     if (done.type !== "create_entry") {
       const ph = done.description_placeholders?.unmatched;
       throw new Error(done.errors ? `Rejected: ${Object.values(done.errors).join(", ")}${ph ? " — " + ph : ""}` : `Unexpected step ${done.step_id}`);
