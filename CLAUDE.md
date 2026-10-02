@@ -583,3 +583,20 @@ search box are display narrowing, not matching, and stay.
 Verified headless: all 39 dashboard configs mounted fresh — selection cards =
 SB Filter's count, 22 state-filter demos show the notice, the rule card = 14;
 editor rule ↔ selection switching and Remove.
+
+## v0.32.0 — sources: filter | rule | entities (2026-10-02)
+
+`filter: sensor.<name>_filter` (a named SB Filter — read from its `entity_ids`, like
+`rule:`), `rule:`, `entities: [ids]`; `sourceOf(cfg)`, `_syncRef()` (was
+`_syncRule`). The legacy INLINE selection still runs (YAML; Param Card
+`$placeholders$` need it) but the editor shows it read-only with **Convert to a
+named filter…** (opens SB Filter's dialog pre-filled; device_classes/units folded
+into classes; hidden when a placeholder is present). Matching dialog: radio
+Filter / SB Watch rule / These entities (/ Inline when present); `_setSource(kind,
+value)` clears every other source key. Pattern rows + per-pattern counts REMOVED.
+Label groups honour a filter's own `selection.labels`. The filter summary line asks
+`sb_filter/filters` (hass.states lags right after a filter is created).
+Monitor's 5 cards migrated to named filters (Occupancy sensors, Matter hubs and
+repeaters, Rack devices, Calendars, FP300 occupancy and desk bulb); backup in the
+session scratchpad. Verified headless: each card = its filter's count, groups and
+wattage bars intact, New filter… creates and selects, Convert pre-fills.

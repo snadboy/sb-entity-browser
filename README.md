@@ -9,6 +9,8 @@ persisted per browser.
 
 > **Requires the [SB Filter](https://github.com/snadboy/sb-filter) integration** (HACS → Integration, then *Settings → Add integration → SB Filter*). The card decides nothing about matching. It shows **one source**: SB Filter's selection (*which* entities — patterns, labels, areas, device class, unit; [FILTER.md](https://github.com/snadboy/sb-filter/blob/main/FILTER.md)), **or** an [SB Watch](https://github.com/snadboy/sb-watch) rule's active set (*which of them are in a given state* — "batteries under 20 %"). Never both. Without SB Filter the card shows an explanatory message instead of a list.
 >
+> **0.32.0:** a card has ONE source — `filter` (a named SB Filter), `rule` (an SB Watch rule) or `entities`. Picking one in the editor clears the others. Selections are made in one place, SB Filter.
+>
 > **0.31.0:** the state options (`states`, `state_min`, `state_max`, `state_for`, `rate`, `rate_window`) moved to SB Watch. A card that still has one shows a notice instead of a list; the editor's Matching overview has a **Remove** button for them. "Save as SB Watch rule" is gone — make the rule in the SB Watch panel, then set `rule`.
 
 ## Features
@@ -67,7 +69,10 @@ All options are in the visual editor. For reference:
 | Option | Meaning |
 |---|---|
 | `title` | Card title |
-| `rule` | An SB Watch rule's Count sensor (`sensor.<rule>_count`): the card shows exactly what the rule holds **active** — after its durations, the list it notified about. The card's other source: picking a rule in the editor clears `patterns`/`labels`/`areas`/`device_classes`/`units`/`classes`, and editing any of those clears the rule |
+| `filter` | **Source:** a named SB Filter's sensor (`sensor.<name>_filter`) — which entities. The editor's Matching dialog has **New filter…** / **Edit filter…**, opening SB Filter's own dialog. A Param Card can switch it: `filter: sensor.$f$_filter` |
+| `rule` | **Source:** an SB Watch rule's Count sensor (`sensor.<rule>_count`) — what the rule holds **active**, after its durations: the list it notified about |
+| `entities` | **Source:** exactly these entities |
+| `patterns` … `classes` | **Legacy inline selection** (before named filters). Still works from YAML — an SB Param Card `$placeholder$` inside a pattern needs it — but the editor offers **Convert to a named filter…** instead of editing it |
 | `patterns` | Entity-id substring globs, implied `*…*` |
 | `labels` | Entities must also carry one of these labels |
 | `areas` | Entities must also be in one of these areas |

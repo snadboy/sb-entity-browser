@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.31.0";
+const VERSION = "0.32.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -83,26 +83,42 @@ const entityAreaId = (hass, id) => {
 // must be satisfied. An empty category doesn't constrain.
 const stateList = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : String(v).split(","))
   .map((s) => String(s ?? "").trim()).filter(Boolean);
-// ---- ONE SOURCE: SB Filter's selection, OR an SB Watch rule ------------------
-// The card decides nothing about matching. Either the selection part of its
-// config (FILTER_KEYS) goes to the SB Filter integration over a WebSocket
-// subscription — WHICH entities: patterns, labels, areas, device class, unit;
-// SB Filter pushes the ids when that set changes — or `rule:` names an SB Watch
-// rule and the card shows what that rule holds active. Never both.
+// ---- ONE SOURCE --------------------------------------------------------------
+// The card decides nothing about matching. Exactly one of:
+//   filter:   sensor.<name>_filter   a NAMED SB Filter (its `entity_ids` attribute)
+//   rule:     sensor.<rule>_count    what an SB Watch rule holds active
+//   entities: [ids]                  exactly these
+//   (legacy) an inline selection — FILTER_KEYS, subscribed to SB Filter. The
+//   editor no longer writes one (it offers to convert it to a named filter), but
+//   YAML keeps it: an SB Param Card's $placeholder$ inside a pattern needs it.
 // Anything about STATE (a value, a range, time in state, a rate) belongs to SB
 // Watch since 0.31.0; a config that still carries one of STATE_KEYS shows a
 // notice instead of a list that would silently ignore it. The header chips,
 // min/max boxes and search box narrow what is SHOWN — they are not matching.
 const FILTER_KEYS = ["patterns", "labels", "areas", "device_classes", "units", "classes"];
 const STATE_KEYS = ["states", "state_min", "state_max", "state_for", "rate", "rate_window"];
-const stateKeysIn = (cfg) => (cfg && !cfg.rule ? STATE_KEYS.filter((k) => cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "" && !(Array.isArray(cfg[k]) && !cfg[k].length)) : []);
+const REF_KEYS = ["filter", "rule", "entities"];
+const hasInline = (cfg) => FILTER_KEYS.some((k) => { const v = cfg?.[k]; return Array.isArray(v) ? v.some((x) => x && String(x).trim() && !String(x).startsWith("___")) : v !== undefined && v !== null && String(v).trim() !== ""; });
+const sourceOf = (cfg) => (cfg?.filter ? "filter" : cfg?.rule ? "rule" : (Array.isArray(cfg?.entities) ? cfg.entities.length : cfg?.entities) ? "entities" : hasInline(cfg) ? "inline" : null);
+const stateKeysIn = (cfg) => (cfg && !cfg.rule && !cfg.filter ? STATE_KEYS.filter((k) => cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "" && !(Array.isArray(cfg[k]) && !cfg[k].length)) : []);
 const filterConfig = (cfg) => {
   const out = {};
   for (const k of FILTER_KEYS) if (cfg && cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "") out[k] = cfg[k];
   return out;
 };
+// SB Filter's one "Add / edit filter" dialog, loaded from the integration on first use.
+// `host` must be inside HA's app tree (the area/label pickers need its contexts).
+const openFilterDialog = async (hass, host, entryId = null, initial = {}) => {
+  if (!window.sbFilterDialog) {
+    const info = await hass.connection.sendMessagePromise({ type: "sb_filter/info" });
+    if (!info.dialog_url) throw new Error("SB Filter 0.7.0 or newer is needed for named filters");
+    await import(info.dialog_url);
+  }
+  return window.sbFilterDialog.open({ hass, host, entryId, initial });
+};
+
 const filterLooksEmpty = (cfg) => {
-  if (cfg && cfg.rule) return false;          // a rule reference is a complete identity on its own
+  if (cfg && (cfg.rule || cfg.filter || (Array.isArray(cfg.entities) && cfg.entities.length))) return false;   // a reference is a complete identity
   const f = filterConfig(cfg);
   return !Object.keys(f).some((k) => (Array.isArray(f[k]) ? f[k].some((v) => v && String(v).trim() && !String(v).startsWith("___")) : true));
 };
@@ -266,7 +282,7 @@ class SbEntityBrowser extends HTMLElement {
     this._hass = hass;
     if (this._pop) this._pop.hass = hass;
     if (first && this._config) this._subscribe();
-    else if (this._config?.rule && this._syncRule()) { this._render(); return; }
+    else if ((this._config?.rule || this._config?.filter) && this._syncRef()) { this._render(); return; }
     if (this._searchFocus) return; // don't yank the list mid-typing in the card search
     if (this._cfgTimer) return;    // a coalesced config render is pending; a hass tick must not front-run it
     // hass updates arrive on EVERY state change in the system. Render only
@@ -365,11 +381,11 @@ class SbEntityBrowser extends HTMLElement {
     return this._ids || [];
   }
 
-  // ---- a rule by reference: show exactly what SB Watch alerted on --------------
-  _syncRule() {
-    const rule = this._config?.rule;
-    if (!rule) return false;
-    const st = this._hass?.states?.[rule];
+  // ---- by reference: a named filter's entities, or what an SB Watch rule holds --
+  _syncRef() {
+    const ref = this._config?.filter || this._config?.rule;
+    if (!ref) return false;
+    const st = this._hass?.states?.[ref];
     const ids = st ? (st.attributes.entity_ids || []) : null;
     const key = JSON.stringify(ids);
     if (key === this._ruleKey) return false;
@@ -377,18 +393,29 @@ class SbEntityBrowser extends HTMLElement {
     this._ids = ids || [];
     this._patCounts = [];
     this._unconfigured = false;
-    this._filterError = st ? null : "rule-missing";
-    this._grammar = st ? "rule" : undefined;
+    this._filterError = st ? null : "ref-missing";
+    this._grammar = st ? (this._config.filter ? "filter" : "rule") : undefined;
     this._sig = "";
     return true;
   }
 
   // ---- the subscription to SB Filter ------------------------------------------
   async _subscribe() {
-    if (this._config?.rule) {                 // the rule's sensor is the source; no filter subscription
+    const src = sourceOf(this._config);
+    if (src === "filter" || src === "rule") {   // a sensor is the source; no subscription of our own
       this._unsubscribeFilter();
-      this._subKey = "rule:" + this._config.rule;
-      this._syncRule();
+      this._subKey = src + ":" + this._config[src];
+      this._ruleKey = null;
+      this._syncRef();
+      this._render();
+      return;
+    }
+    if (src === "entities") {
+      this._unsubscribeFilter();
+      this._subKey = "entities";
+      this._ids = [...new Set((Array.isArray(this._config.entities) ? this._config.entities : String(this._config.entities).split(",")).map((e) => String(e).trim()).filter(Boolean))].sort();
+      this._patCounts = []; this._unconfigured = false; this._filterError = null; this._grammar = "entities";
+      this._sig = "";
       this._render();
       return;
     }
@@ -702,7 +729,8 @@ class SbEntityBrowser extends HTMLElement {
       const names = this._labelNames || {};
       // Filtered by labels? Then only THOSE labels form groups: an entity that
       // matched on "Matter Hub" is not also listed under its "Button" label.
-      const want = (Array.isArray(cfg.labels) ? cfg.labels : cfg.labels ? [cfg.labels] : []).filter((v) => v && !String(v).startsWith("___"));
+      const fl = cfg.filter ? h.states[cfg.filter]?.attributes?.selection?.labels : cfg.labels;   // a named filter's labels count too
+      const want = (Array.isArray(fl) ? fl : fl ? [fl] : []).filter((v) => v && !String(v).startsWith("___"));
       rows = rows.flatMap(([id, st]) => {
         const all = entityLabelIds(h, id);
         const ls = want.length ? all.filter((l) => want.includes(l)) : all;
@@ -860,7 +888,7 @@ class SbEntityBrowser extends HTMLElement {
     // An escape hatch, not just a message. Search and min/max can empty the list
     // with no chip to show for it, so the only way out must be on screen.
     const emptyHtml = `<div class="empty"><ha-icon icon="${this._filterError === "state-moved" ? "mdi:swap-horizontal" : this._filterError ? "mdi:puzzle-remove-outline" : this._ids == null ? "mdi:timer-sand" : this._unconfigured ? "mdi:filter-variant" : "mdi:magnify-remove-outline"}"></ha-icon>` +
-      `<div>${this._filterError === "rule-missing" ? `Rule sensor ${esc(String(this._config.rule))} not found — is that SB Watch rule still there?`
+      `<div>${this._filterError === "ref-missing" ? (this._config.filter ? `Filter sensor ${esc(String(this._config.filter))} not found — was that SB Filter deleted or renamed?` : `Rule sensor ${esc(String(this._config.rule))} not found — is that SB Watch rule still there?`)
         : this._filterError === "state-moved" ? `State filtering moved to SB Watch (${esc(stateKeysIn(this._config).join(", "))}). Make a rule there and set this card's <b>rule</b>, or remove the state settings in the card editor.`
         : this._filterError === "missing" ? "SB Filter integration not installed — add it from HACS (snadboy/sb-filter), then Settings → Add integration → SB Filter"
         : this._filterError ? `SB Filter error: ${esc(this._filterError)}`
@@ -1354,6 +1382,12 @@ class SbEntityBrowser extends HTMLElement {
 // ============================================================================
 
 const EDITOR_STYLE = `
+  dialog.sped .srcpick { display: flex; flex-wrap: wrap; gap: 16px; margin: 4px 0 12px; font-size: .92em; }
+  dialog.sped .srcpick label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  dialog.sped .btns { gap: 8px; margin: 8px 0; }
+  dialog.sped .fnew, dialog.sped .fedit { font: inherit; font-size: .9em; color: var(--primary-color); background: none; border: 1px solid var(--primary-color); border-radius: 14px; padding: 4px 12px; cursor: pointer; }
+  dialog.sped .fedit[disabled] { opacity: .5; cursor: default; }
+  dialog.sped .vnote { color: var(--secondary-text-color); font-size: .85em; margin: 6px 0; }
   .spe { color: var(--primary-text-color); }
   .spe .sec { background: var(--secondary-background-color, rgba(127,127,127,.08)); border: 1px solid var(--divider-color); border-radius: 10px; margin-bottom: 12px; }
   .spe .sec h3 { margin: 0; padding: 10px 14px; font-size: .95em; font-weight: 500; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--divider-color); }
@@ -1397,14 +1431,16 @@ const LABELS = {
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button", popout: "Show the full-size (pop-out) button",
   device_classes: "Device classes", units: "Units",
-  rule: "SB Watch rule (Count sensor)",
+  rule: "SB Watch rule (Count sensor)", filter: "Filter (SB Filter sensor)", entities: "Entities",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
   device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
   units: "Comma-separated units of measurement, e.g. %, °F, W — exact match.",
-  rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor) — e.g. batteries under 20 %. Picking a rule clears the selection above, and editing the selection clears the rule: the card has one source.",
+  rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor) — e.g. batteries under 20 %.",
+  filter: "A named SB Filter: which entities. Every card and rule that picks it follows its edits.",
+  entities: "Exactly these entities.",
   fixed_size: "Keep the card the height of Max visible rows even when fewer entities match, so neighbouring cards don't shift. In a sections view, fixed rows in the Layout tab do the same and also cap it.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
@@ -1440,15 +1476,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (this._form) this._form.hass = hass;
-    if (this._form2) this._form2.hass = hass;
-    if (this._form3) this._form3.hass = hass;
-    // hass ticks are frequent; the counts don't need sub-second freshness.
-    const now = Date.now();
-    if (now - (this._lastCounts || 0) > 2000) {
-      this._lastCounts = now;
-      this._refreshCounts();
-      if (first) this._renderOverview();
-    }
+    if (first) this._renderOverview();
   }
 
   // Debounced: emitting per keystroke makes the dialog re-render the preview
@@ -1467,29 +1495,13 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._scheduleOverview();
   }
 
-  // The card has ONE source: SB Filter's selection, or an SB Watch rule. Picking
-  // a rule drops the selection; touching the selection drops the rule. (ha-form
-  // posts its whole data object, so compare against what is stored.)
-  _setSource(v, now = false) {
-    const c = this._config;
-    const filled = (x) => x !== undefined && x !== null && x !== "" && !(Array.isArray(x) && !x.length);
-    if (filled(v.rule) && v.rule !== c.rule) {
-      const clear = Object.fromEntries([...FILTER_KEYS, ...STATE_KEYS].map((k) => [k, undefined]));
-      this._set({ ...clear, rule: v.rule }, true);
-      this._syncForms();
-      return;
-    }
-    const touched = FILTER_KEYS.some((k) => k in v && JSON.stringify(v[k] ?? null) !== JSON.stringify(c[k] ?? null) && filled(v[k]));
-    if (touched && c.rule) {
-      this._set({ ...v, rule: undefined });
-      this._syncForms();
-      return;
-    }
-    this._set(v, now);
-  }
-  _syncForms() {
-    for (const f of [this._form, this._form2, this._form3]) if (f) f.data = this._config;
-    if (this._patRows) this._renderPatterns();
+  // The card has ONE source. Setting one clears every other (the inline legacy
+  // selection and stale state keys included).
+  _setSource(kind, value) {
+    const clear = Object.fromEntries([...REF_KEYS, ...FILTER_KEYS, ...STATE_KEYS].map((k) => [k, undefined]));
+    const empty = value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length);
+    this._set({ ...clear, ...(empty ? {} : { [kind]: value }) }, true);
+    this._total();
   }
 
   // ---- overview -----------------------------------------------------------
@@ -1500,7 +1512,9 @@ class SbEntityBrowserEditor extends HTMLElement {
 
   // Live counts come from SB Filter (one-shot match); cached per filter, refreshed async.
   _total() {
-    if (this._config.rule) { const st = this._hass?.states?.[this._config.rule]; return st ? (st.attributes.entity_ids || []).length : null; }
+    const ref = this._config.filter || this._config.rule;
+    if (ref) { const st = this._hass?.states?.[ref]; return st ? (st.attributes.entity_ids || []).length : null; }
+    if (sourceOf(this._config) === "entities") return (Array.isArray(this._config.entities) ? this._config.entities : [this._config.entities]).filter(Boolean).length;
     if (stateKeysIn(this._config).length) return 0;
     if (!this._hass?.connection) return null;
     const key = JSON.stringify(filterConfig(this._config));
@@ -1518,11 +1532,19 @@ class SbEntityBrowserEditor extends HTMLElement {
     const c = this._config;
     const pats = (c.patterns || []).filter((p) => p && p.trim());
     const total = this._total();
-    if (c.rule) return [
-      ["Rule", `<code>${esc(c.rule)}</code> — shows what the rule holds active`],
-      ["Matches now", total == null ? `<span class="warn">rule sensor not found</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}`],
-    ];
+    const now = (what) => ["Matches now", total == null ? `<span class="warn">${what} not found</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}`];
+    if (c.filter) {
+      const st = this._hass?.states?.[c.filter];
+      const sel = st?.attributes?.selection || {};
+      return [["Filter", `${esc(st?.attributes?.friendly_name || c.filter)} <code>${esc(c.filter)}</code>`],
+        ...Object.entries(sel).map(([k, v]) => [k[0].toUpperCase() + k.slice(1), (Array.isArray(v) ? v : [v]).map((x) => `<code>${esc(String(x))}</code>`).join(" ")]),
+        now("filter sensor")];
+    }
+    if (c.rule) return [["Rule", `<code>${esc(c.rule)}</code> — shows what the rule holds active`], now("rule sensor")];
+    if (sourceOf(c) === "entities") return [["Entities", (Array.isArray(c.entities) ? c.entities : [c.entities]).map((e) => `<code>${esc(String(e))}</code>`).join(" ")], now("entities")];
+    if (!sourceOf(c) && !stateKeysIn(c).length) return [["Source", `<span class="off">none — pick a filter, a rule or entities</span>`]];
     return [
+      ["Inline selection", `<span class="off">legacy — the editor offers a named filter instead</span>`],
       ["Patterns", pats.length ? pats.map((p) => `<code>${esc(p)}</code>${/\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(p) ? `<span class="chip">from a Param Card</span>` : ""}`).join(" ") : `<span class="off">none — labels/areas decide</span>`],
       ...((c.labels || []).length ? [["Labels", `${c.labels.length} <span class="chip">AND</span>`]] : []),
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
@@ -1575,7 +1597,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       sec("matching", "Matching", this._summaryMatching()) +
       sec("display", "Display", this._summaryDisplay()) +
       sec("controls", "Controls", this._summaryControls()) +
-      `<div class="note">The card shows ONE source: SB Filter's selection (patterns, labels, areas, device class, unit — which entities), or an SB Watch rule (which of them are in a given state, e.g. under 20 %). Words in one pattern are ANDed — put an SB Param Card's <code>$name$</code> inside a pattern (“fp300 $q$”) to let a dropdown narrow it; the search box narrows on top.</div>`;
+      `<div class="note">The card shows ONE source: a named SB Filter (which entities), an SB Watch rule (which of them are in a given state, e.g. under 20 %), or a list of entities. An SB Param Card can switch it: <code>filter: sensor.$f$_filter</code>. The search box narrows on top.</div>`;
     this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
     const ds = this._ov.querySelector("button.dropstate");
     if (ds) ds.addEventListener("click", () => { this._set(Object.fromEntries(STATE_KEYS.map((k) => [k, undefined])), true); this._totalKey = null; this._renderOverview(); });
@@ -1617,8 +1639,7 @@ class SbEntityBrowserEditor extends HTMLElement {
   _closeDialog(restore) {
     const d = this._dlg;
     if (!d) return;
-    this._dlg = null; this._open = null; this._form = null; this._patRows = null; this._patWrap = null;
-    this._form2 = null; this._form3 = null;
+    this._dlg = null; this._open = null; this._form = null; this._srcPick = null;
     clearTimeout(this._emitTimer);
     if (restore && this._snap) { this._config = this._snap; }
     this._emit(true);                       // flush: a pending debounced edit, or the restore
@@ -1647,25 +1668,71 @@ class SbEntityBrowserEditor extends HTMLElement {
     const body = d.querySelector(".pb");
     body.innerHTML = "";
     if (this._open === "matching") {
-      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Entity patterns"; body.appendChild(sub);
-      this._patWrap = document.createElement("div"); body.appendChild(this._patWrap);
-      this._patRows = null;
-      this._renderPatterns();
-      this._form = this._mkForm([
-        { name: "labels", selector: { label: { multiple: true } } },
-        { name: "areas", selector: { area: { multiple: true } } },
-      ], (v) => this._setSource(v));
-      body.appendChild(this._form);
-      this._form2 = this._mkForm([
-        { name: "device_classes", selector: { text: {} } },
-        { name: "units", selector: { text: {} } },
-      ], (v) => this._setSource(v));
-      body.appendChild(this._form2);
-      const subR = document.createElement("div"); subR.className = "sub"; subR.textContent = "Or: an SB Watch rule"; body.appendChild(subR);
-      this._form3 = this._mkForm([
-        { name: "rule", selector: { entity: { filter: { integration: "sb_watch", domain: "sensor" } } } },
-      ], (v) => this._setSource(v));
-      body.appendChild(this._form3);
+      const c = this._config;
+      const src = sourceOf(c) || this._srcPick || "filter";
+      const radios = document.createElement("div"); radios.className = "srcpick";
+      const kinds = [["filter", "A filter"], ["rule", "An SB Watch rule"], ["entities", "These entities"], ...(src === "inline" ? [["inline", "Inline (legacy)"]] : [])];
+      radios.innerHTML = kinds.map(([k, l]) => `<label><input type="radio" name="seb-src" value="${k}" ${k === src ? "checked" : ""}> ${l}</label>`).join("");
+      radios.querySelectorAll("input").forEach((r) => r.addEventListener("change", () => { this._srcPick = r.value; this._renderDialogBody(); }));
+      body.appendChild(radios);
+      if (src === "filter") {
+        this._form = this._mkForm([{ name: "filter", selector: { entity: { filter: { integration: "sb_filter", domain: "sensor" } } } }],
+          (v) => { if (v.filter !== c.filter) { this._setSource("filter", v.filter); this._renderDialogBody(); } });
+        body.appendChild(this._form);
+        const row = document.createElement("div"); row.className = "prow btns";
+        row.innerHTML = `<button class="fnew">New filter…</button><button class="fedit" ${c.filter ? "" : "disabled"}>Edit filter…</button>`;
+        body.appendChild(row);
+        const viaDialog = async (entryId, initial) => {
+          try {
+            const res = await openFilterDialog(this._hass, this, entryId, initial);
+            if (res?.entity_id) this._setSource("filter", res.entity_id);
+            this._renderDialogBody(); this._renderOverview();
+          } catch (e) { note.textContent = String(e?.message || e); }
+        };
+        row.querySelector(".fnew").addEventListener("click", () => viaDialog(null));
+        const note = document.createElement("div"); note.className = "vnote";
+        note.textContent = c.filter ? "" : "Pick a filter, or make one with New filter…";
+        body.appendChild(note);
+        // ask SB Filter, not hass.states: a filter made a moment ago may not have reached the frontend yet
+        let entryId = null;
+        if (c.filter) this._hass.connection.sendMessagePromise({ type: "sb_filter/filters" }).then((r) => {
+          const f = (r.filters || []).find((x) => x.entity_id === c.filter);
+          if (!f) { note.textContent = `${c.filter} is not a named SB Filter`; return; }
+          entryId = f.entry_id;
+          note.textContent = `${f.name}: ` + Object.entries(f.selection).map(([k, v]) => `${k}: ${(Array.isArray(v) ? v : [v]).join(", ")}`).join(" · ") + (f.count != null ? ` — ${f.count} now` : "");
+        }).catch(() => {});
+        row.querySelector(".fedit").addEventListener("click", () => { if (entryId) viaDialog(entryId); });
+      } else if (src === "rule") {
+        this._form = this._mkForm([{ name: "rule", selector: { entity: { filter: { integration: "sb_watch", domain: "sensor" } } } }],
+          (v) => { if (v.rule !== c.rule) this._setSource("rule", v.rule); });
+        body.appendChild(this._form);
+      } else if (src === "entities") {
+        this._form = this._mkForm([{ name: "entities", selector: { entity: { multiple: true } } }],
+          (v) => this._setSource("entities", (v.entities || []).filter(Boolean)));
+        body.appendChild(this._form);
+      } else {
+        // the legacy inline selection: shown, not edited — one place makes selections
+        const sel = {}; for (const k of FILTER_KEYS) if (c[k] !== undefined && c[k] !== "" && !(Array.isArray(c[k]) && !c[k].length)) sel[k] = c[k];
+        const param = /\$[a-zA-Z_][\w-]*(:\w+)?\$/.test(JSON.stringify(sel));
+        const note = document.createElement("div"); note.className = "vnote";
+        note.innerHTML = `This card carries its own selection (from before named filters): <code>${esc(JSON.stringify(sel))}</code>. ` +
+          (param ? "It uses an SB Param Card placeholder, so it stays inline — edit it in YAML." : "Turn it into a named filter that other cards and rules can pick:");
+        body.appendChild(note);
+        if (!param) {
+          const btn = document.createElement("button"); btn.className = "fnew"; btn.textContent = "Convert to a named filter…";
+          btn.addEventListener("click", async () => {
+            const classes = [...stateList(sel.classes)];
+            const dcs = stateList(sel.device_classes), units = stateList(sel.units);
+            if (dcs.length && units.length) dcs.forEach((d) => units.forEach((u) => classes.push(`${d}:${u}`)));
+            else { dcs.forEach((d) => classes.push(d)); units.forEach((u) => classes.push(`:${u}`)); }
+            try {
+              const res = await openFilterDialog(this._hass, this, null, { name: c.title || "", patterns: (c.patterns || []).filter((x) => x && String(x).trim()), areas: c.areas, labels: c.labels, classes });
+              if (res?.entity_id) { this._setSource("filter", res.entity_id); this._srcPick = null; this._renderDialogBody(); this._renderOverview(); }
+            } catch (e) { note.textContent = String(e?.message || e); }
+          });
+          body.appendChild(btn);
+        }
+      }
     } else if (this._open === "display") {
       this._form = this._mkForm([
         { name: "title", selector: { text: {} } },
@@ -1691,94 +1758,6 @@ class SbEntityBrowserEditor extends HTMLElement {
     }
   }
 
-  // ---- pattern rows (Matching dialog) ---------------------------------------
-  // The live "Matches N entities" line is a full-estate scan per pattern row;
-  // per keystroke that is a costly search too, so it waits for the same quiet.
-  _scheduleCounts() {
-    clearTimeout(this._countsTimer);
-    this._countsTimer = setTimeout(() => this._refreshCounts(), TYPING_QUIET_MS);
-  }
-
-  _count(p, cb) {
-    // One pattern on its own, as SB Filter sees it. Async: cb(n) when known, cb(null) when blank/unavailable.
-    if (!this._hass?.connection || !p || !String(p).trim()) { cb(null); return; }
-    this._hass.connection.sendMessagePromise({ type: "sb_filter/match", config: { patterns: [p] } })
-      .then((r) => cb(r.ids.length)).catch(() => cb(null));
-  }
-
-
-  _refreshCounts() {
-    (this._patRows || []).forEach(({ input, count }) => {
-      const value = input.value;
-      this._count(value, (n) => {
-        if (input.value !== value) return;   // typed on since
-        count.textContent =
-          n == null
-            ? "Words match ids AND friendly names (any order, case-insensitive, * wildcards). A $name$ from a wrapping SB Param Card works here too."
-            : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
-      });
-    });
-  }
-
-  // Rebuild the pattern rows only when the row COUNT changes (add/delete);
-  // on ordinary re-renders just sync values, skipping the focused field —
-  // rebuilding on every keystroke would steal focus. Plain <input>s, NOT
-  // ha-textfield: that component isn't reliably defined outside ha-form's
-  // lazy loading, and pre-upgrade property sets are shadowed.
-  _renderPatterns() {
-    if (!this._patWrap) return;
-    const pats = this._config.patterns || [];
-    if (this._patRows && this._patRows.length === pats.length) {
-      this._patRows.forEach(({ input }, i) => {
-        if (document.activeElement !== input && input.value !== (pats[i] || ""))
-          input.value = pats[i] || "";
-      });
-      this._refreshCounts();
-      return;
-    }
-    this._patWrap.innerHTML = "";
-    this._patRows = [];
-    pats.forEach((p, i) => {
-      const block = document.createElement("div");
-      block.style.cssText = "margin-bottom:10px;";
-      const row = document.createElement("div"); row.className = "prow";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.value = p || "";
-      input.placeholder = "e.g. switch.rack_* or fp300 occupancy";
-      input.autocomplete = "off";
-      input.addEventListener("input", () => {
-        const arr = [...(this._config.patterns || [])];
-        arr[i] = input.value;
-        this._setSource({ patterns: arr });
-        this._scheduleCounts();
-      });
-      const del = document.createElement("ha-icon");
-      del.icon = "mdi:delete-outline";
-      del.title = "Remove pattern";
-      del.className = "del";
-      del.addEventListener("click", () => {
-        const arr = [...(this._config.patterns || [])];
-        arr.splice(i, 1);
-        this._setSource({ patterns: arr }, true);
-        this._renderPatterns();
-      });
-      row.append(input, del);
-      const count = document.createElement("div"); count.className = "count";
-      block.append(row, count);
-      this._patWrap.appendChild(block);
-      this._patRows.push({ input, count });
-    });
-    const add = document.createElement("div"); add.className = "link";
-    add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add pattern`;
-    add.addEventListener("click", () => {
-      this._set({ patterns: [...(this._config.patterns || []), ""] });
-      this._renderPatterns();
-      this._patRows[this._patRows.length - 1]?.input.focus();
-    });
-    this._patWrap.appendChild(add);
-    this._refreshCounts();
-  }
 }
 
 customElements.define(CARD, SbEntityBrowser);
