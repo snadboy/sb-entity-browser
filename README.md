@@ -7,15 +7,17 @@ mode**. Everything is configured in the visual editor; the card creates **no
 helper entities**: the viewer's filter selection is card-local UI state,
 persisted per browser.
 
-> **Requires the [SB Filter](https://github.com/snadboy/sb-filter) integration** (HACS → Integration, then *Settings → Add integration → SB Filter*). Since v0.19.0 the card no longer decides which entities match: it subscribes to SB Filter, the one implementation of the filter grammar ([FILTER.md](https://github.com/snadboy/sb-filter/blob/main/FILTER.md)), and SB Filter pushes the ids whenever states, registries or time move them. Without it the card shows an explanatory message instead of a list.
+> **Requires the [SB Filter](https://github.com/snadboy/sb-filter) integration** (HACS → Integration, then *Settings → Add integration → SB Filter*). The card decides nothing about matching. It shows **one source**: SB Filter's selection (*which* entities — patterns, labels, areas, device class, unit; [FILTER.md](https://github.com/snadboy/sb-filter/blob/main/FILTER.md)), **or** an [SB Watch](https://github.com/snadboy/sb-watch) rule's active set (*which of them are in a given state* — "batteries under 20 %"). Never both. Without SB Filter the card shows an explanatory message instead of a list.
+>
+> **0.31.0:** the state options (`states`, `state_min`, `state_max`, `state_for`, `rate`, `rate_window`) moved to SB Watch. A card that still has one shows a notice instead of a list; the editor's Matching overview has a **Remove** button for them. "Save as SB Watch rule" is gone — make the rule in the SB Watch panel, then set `rule`.
 
 ## Features
 
 - **Entity matching** by patterns, **labels**, and **areas** — any mix of
   domains. Every pattern word matches case-insensitively as a substring of
   the entity id *or the friendly name* (implied wildcards: `battery` means
-  `*battery*`; explicit `*`/`?` work too), or as an **exact match of the
-  current state** — `CR2450` finds the sensors reporting CR2450. Words
+  `*battery*`; explicit `*`/`?` work too). (The card's search box also
+  matches an exact state — `CR2450` — but that only narrows what is shown.) Words
   combine in any order: `fp300 occupancy` ≡ `occupancy fp300`. Within a
   category any entry matches; across categories every configured one must be
   satisfied — so patterns + an area means "these entities, in that area".
@@ -65,16 +67,13 @@ All options are in the visual editor. For reference:
 | Option | Meaning |
 |---|---|
 | `title` | Card title |
-| `rule` | An SB Watch rule's Count sensor. The editor's Matching section has **Save as SB Watch rule…**, which creates a rule from the card's filter (its dwell and actions are then set in the rule's settings) and offers to point the card at it (`sensor.<rule>_count`): the card shows exactly what the rule holds **active** — after its dwell, the list it notified about. When set, every filter key below is ignored |
+| `rule` | An SB Watch rule's Count sensor (`sensor.<rule>_count`): the card shows exactly what the rule holds **active** — after its durations, the list it notified about. The card's other source: picking a rule in the editor clears `patterns`/`labels`/`areas`/`device_classes`/`units`/`classes`, and editing any of those clears the rule |
 | `patterns` | Entity-id substring globs, implied `*…*` |
 | `labels` | Entities must also carry one of these labels |
 | `areas` | Entities must also be in one of these areas |
-| `states` | Final filter on the **state** — in the editor a set of **chips** from SB Filter's vocabulary of what the other fields select (translated label shown, raw value stored, live count), plus a box for ranges and numbers: a list (or comma string) of values and/or numeric ranges, ORed — `[on, Detected, unavailable, "<20", ">=80", "40-60"]`. Values match the raw or formatted state, case-insensitively. Ranges: `<n`, `<=n`, `>n`, `>=n`, `a-b` / `a..b` (inclusive); only a numeric state can satisfy one. A Param Card's `$p$` works here, so a knob can offer "Low (<20)" |
-| `state_min` / `state_max` | Shorthand for one more inclusive range, either side open |
-| `state_for` | Time in the **current** state, from `last_changed`: `2h` / `>=2h` at least that long, `<5m` changed within the last five minutes. Units `d h m s` combine (`1h30m`); a bare number is minutes. The list re-evaluates every minute |
-| `rate` / `rate_window` | Rate of change of a numeric state: `[">0.5/h", "<-2/h"]` per minute/hour/day, ORed; `rate_window` measures over a different span (default = the rate's unit). A sensor needs history at least as old as the window |
 | `device_classes` | Entities must carry one of these device classes (`battery, temperature`) — ANDed with the rest |
-| `units` | Entities must have one of these units of measurement (`%`, `°F`, `W`), exact match. Keeps a numeric range from sweeping in the wrong quantity — `sensor.*battery` with `<20` otherwise includes battery *voltage* sensors at 2.98 V |
+| `units` | Entities must have one of these units of measurement (`%`, `°F`, `W`), exact match |
+| `classes` | Device class AND unit as pairs, ORed: `["battery:%", "temperature", ":°F"]` (YAML only) |
 | `secondary` | Row secondary-info fields, joined with `·` |
 | `secondary_template` | Jinja secondary line, rendered live only for rows **on screen** (IntersectionObserver; subscriptions attach on scroll-in, release on scroll-out, hard cap 60) |
 | `group_by` | `none`, `floor`, `area`, `state`, `domain`, or `label` (an entity with several labels, its own or its device's, is listed under each; when the card is filtered by `labels`, only those labels form groups) — collapsible section headers with per-card collapse/expand-all buttons |

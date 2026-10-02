@@ -565,3 +565,21 @@ as YAML.
 ## v0.30.4 — save-as-rule posts one step (2026-10-01)
 
 For sb_watch 0.10.0's one-page form: `{name, advanced: {filter_yaml, problem}, actions: {action: "none"}}`.
+
+## v0.31.0 — one source: SB Filter's selection OR an SB Watch rule (2026-10-02)
+
+The split (user decision): SB Filter = which entities, SB Watch = state +
+actions, this card = a list. `FILTER_KEYS` = patterns, labels, areas,
+device_classes, units, classes. `STATE_KEYS` (states, state_min/max, state_for,
+rate, rate_window) are no longer sent; a config that still has one shows
+"State filtering moved to SB Watch …" instead of a list (`_filterError =
+"state-moved"`), the editor overview lists them with a **Remove** button.
+Removed: value chips (`sb_filter/values`), `_unmatched`, Save-as-rule
+(`_ruleBar`/`_openSaveRule`/`_createRule`), the state fields. Kept: `rule:`.
+Editor: `_setSource` — picking a rule clears the selection keys, editing a
+selection key clears the rule; `_mkForm` now posts only its own fields (ha-form
+posts its whole, possibly stale, data object). The header chips / min-max /
+search box are display narrowing, not matching, and stay.
+Verified headless: all 39 dashboard configs mounted fresh — selection cards =
+SB Filter's count, 22 state-filter demos show the notice, the rule card = 14;
+editor rule ↔ selection switching and Remove.

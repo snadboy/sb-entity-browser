@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.30.4";
+const VERSION = "0.31.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -39,10 +39,11 @@ const OFFISH = new Set(["off", "closed", "idle", "standby", "paused", "docked", 
 const globToRegex = (glob, flags) =>
   new RegExp(glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, "."), flags);
 
-// Every pattern token (space-separated, any order) matches case-insensitively
-// as a substring of the entity id OR the friendly name — HA target-picker
-// style — or as an EXACT match of the current state (so "CR2450" finds the
-// battery-type sensors reporting CR2450). * and ? wildcards work per token.
+// The SEARCH BOX (runtime narrowing, not the card's selection — that is SB
+// Filter's, which matches ids and names only): every token (space-separated,
+// any order) matches case-insensitively as a substring of the entity id OR the
+// friendly name — HA target-picker style — or as an EXACT match of the current
+// state (so "CR2450" finds the sensors reporting CR2450). * and ? per token.
 // Single tokens use the same rules: users type what they see on screen, and
 // what they see is friendly names and states, not lowercase ids.
 const patternMatcher = (p) => {
@@ -78,24 +79,23 @@ const entityAreaId = (hass, id) => {
 };
 
 // Matching semantics: within a category any entry matches (OR); across the
-// categories that are configured — patterns ∧ labels ∧ areas — ALL must be
-// satisfied. An empty category doesn't constrain.
-// State match (config-level, part of the card's identity — unlike the
-// viewer's chips). `states`: a list (or comma string, e.g. from a Param
-// Card's $p$) of raw OR formatted state values, case-insensitive.
-// `state_min` / `state_max`: an inclusive numeric range, either side open;
-// only a numeric state can satisfy it. An entity passes when it matches a
-// value OR falls in the range — "unavailable, or below 20 %".
+// categories that are configured — patterns ∧ labels ∧ areas ∧ classes — ALL
+// must be satisfied. An empty category doesn't constrain.
 const stateList = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : String(v).split(","))
   .map((s) => String(s ?? "").trim()).filter(Boolean);
-// ---- MATCHING LIVES IN THE sb_filter INTEGRATION ---------------------------
-// This card no longer decides which entities match. The filter part of its
-// config (FILTER_KEYS) goes to Home Assistant over a WebSocket subscription
-// and SB Filter pushes the ids whenever they change — states, registries and
-// time (state_for) all move them. The grammar is FILTER.md in
-// github.com/snadboy/sb-filter; the search box below is runtime narrowing on
-// top of the result, not part of the grammar.
-const FILTER_KEYS = ["patterns", "labels", "areas", "device_classes", "units", "states", "state_min", "state_max", "state_for", "rate", "rate_window"];
+// ---- ONE SOURCE: SB Filter's selection, OR an SB Watch rule ------------------
+// The card decides nothing about matching. Either the selection part of its
+// config (FILTER_KEYS) goes to the SB Filter integration over a WebSocket
+// subscription — WHICH entities: patterns, labels, areas, device class, unit;
+// SB Filter pushes the ids when that set changes — or `rule:` names an SB Watch
+// rule and the card shows what that rule holds active. Never both.
+// Anything about STATE (a value, a range, time in state, a rate) belongs to SB
+// Watch since 0.31.0; a config that still carries one of STATE_KEYS shows a
+// notice instead of a list that would silently ignore it. The header chips,
+// min/max boxes and search box narrow what is SHOWN — they are not matching.
+const FILTER_KEYS = ["patterns", "labels", "areas", "device_classes", "units", "classes"];
+const STATE_KEYS = ["states", "state_min", "state_max", "state_for", "rate", "rate_window"];
+const stateKeysIn = (cfg) => (cfg && !cfg.rule ? STATE_KEYS.filter((k) => cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "" && !(Array.isArray(cfg[k]) && !cfg[k].length)) : []);
 const filterConfig = (cfg) => {
   const out = {};
   for (const k of FILTER_KEYS) if (cfg && cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== "") out[k] = cfg[k];
@@ -326,7 +326,7 @@ class SbEntityBrowser extends HTMLElement {
     if (this._config && this._hass) {
       this._setupTplObserver(this._lastScrolls ?? false);
       this._setupIconReconcile(this._lastScrolls ?? false);
-      this._subscribe();                       // SB Filter pushes state_for changes itself; no local tick for it
+      this._subscribe();
     }
     this._tick = setInterval(() => {
       // "20m ago" texts only: update them in place. A full rebuild every minute
@@ -392,6 +392,16 @@ class SbEntityBrowser extends HTMLElement {
       this._render();
       return;
     }
+    const moved = stateKeysIn(this._config);
+    if (moved.length) {                       // state filtering moved to SB Watch: say so, match nothing
+      this._unsubscribeFilter();
+      this._subKey = "moved";
+      this._filterError = "state-moved";
+      this._ids = [];
+      this._sig = "";
+      this._render();
+      return;
+    }
     const conn = this._hass?.connection;
     if (!conn) return;
     const cfg = filterConfig(this._config);
@@ -407,7 +417,6 @@ class SbEntityBrowser extends HTMLElement {
         this._patCounts = m.pattern_counts || [];
         this._unconfigured = !m.configured;
         this._unreadable = m.unreadable || [];
-        this._unmatched = m.unmatched_values || [];
         this._grammar = m.grammar;
         this._filterError = null;
         this._sig = "";
@@ -850,13 +859,13 @@ class SbEntityBrowser extends HTMLElement {
     const filtered = !!(searchM || this._selected.size || this._bsel.size || this._min !== "" || this._max !== "");
     // An escape hatch, not just a message. Search and min/max can empty the list
     // with no chip to show for it, so the only way out must be on screen.
-    const emptyHtml = `<div class="empty"><ha-icon icon="${this._filterError ? "mdi:puzzle-remove-outline" : this._ids == null ? "mdi:timer-sand" : this._unconfigured ? "mdi:filter-variant" : "mdi:magnify-remove-outline"}"></ha-icon>` +
+    const emptyHtml = `<div class="empty"><ha-icon icon="${this._filterError === "state-moved" ? "mdi:swap-horizontal" : this._filterError ? "mdi:puzzle-remove-outline" : this._ids == null ? "mdi:timer-sand" : this._unconfigured ? "mdi:filter-variant" : "mdi:magnify-remove-outline"}"></ha-icon>` +
       `<div>${this._filterError === "rule-missing" ? `Rule sensor ${esc(String(this._config.rule))} not found — is that SB Watch rule still there?`
+        : this._filterError === "state-moved" ? `State filtering moved to SB Watch (${esc(stateKeysIn(this._config).join(", "))}). Make a rule there and set this card's <b>rule</b>, or remove the state settings in the card editor.`
         : this._filterError === "missing" ? "SB Filter integration not installed — add it from HACS (snadboy/sb-filter), then Settings → Add integration → SB Filter"
         : this._filterError ? `SB Filter error: ${esc(this._filterError)}`
         : this._ids == null ? "Matching…"
         : this._unconfigured ? "Choose an area or label, or configure an entity pattern"
-        : (this._unmatched || []).length ? `No entity can be in state “${esc(this._unmatched[0].value)}”${this._unmatched[0].suggestions[0] ? ` — did you mean “${esc(this._unmatched[0].suggestions[0])}”?` : ""}`
         : `No entities match${filtered ? " the current filters" : ""}`}</div>` +
       (filtered ? `<div class="clear-all" role="button" tabindex="0">Clear filters</div>` : "") +
       `</div>`;
@@ -974,7 +983,7 @@ class SbEntityBrowser extends HTMLElement {
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
         ${this._diag
-          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION} · SB Filter grammar ${this._grammar ?? "?"}${(this._unreadable || []).length ? ` · <span class="warn">unreadable: ${esc(this._unreadable.join(", "))}</span>` : ""}${(this._unmatched || []).length ? ` · <span class="warn">no such state: ${esc(this._unmatched.map((u) => u.value + (u.suggestions[0] ? ` (→ ${u.suggestions[0]}?)` : "")).join(", "))}</span>` : ""}${
+          ? `<div class="note">${ids.length} matched · ${rows.length} shown · ${this._tsubs.size} template subs · v${VERSION} · SB Filter grammar ${this._grammar ?? "?"}${(this._unreadable || []).length ? ` · <span class="warn">unreadable: ${esc(this._unreadable.join(", "))}</span>` : ""}${
               (cfg.patterns || []).length > 1
                 ? " — " + (cfg.patterns || []).map((p, i) => `${esc(p)}: ${patCounts[i]}`).join(" · ")
                 : ""}</div>`
@@ -1358,9 +1367,6 @@ const EDITOR_STYLE = `
   .spe .off { color: var(--secondary-text-color); font-style: italic; }
   .spe .warn { color: var(--warning-color, orange); }
   .spe .note { color: var(--secondary-text-color); font-size: .8em; padding: 2px 4px 6px; }
-  .spe .rulebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--divider-color); font-size: .85em; }
-  .spe .rulebar button { font: inherit; font-size: .9em; color: var(--primary-color); background: none; border: 1px solid var(--primary-color); border-radius: 14px; padding: 3px 12px; cursor: pointer; }
-  .spe .rulebar .ok { color: var(--success-color, #43a047); }
   dialog.sped .rname { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); color: var(--primary-text-color); }
   dialog.sped { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0; width: min(600px, 92vw); max-height: 85vh;
     background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
@@ -1373,17 +1379,6 @@ const EDITOR_STYLE = `
   dialog.sped .pf button.done { background: var(--primary-color); color: var(--text-primary-color, #fff); }
   dialog.sped .hint { color: var(--secondary-text-color); font-size: .8em; padding: 6px 2px 10px; }
   dialog.sped .sub { color: var(--secondary-text-color); font-size: .75em; letter-spacing: .04em; text-transform: uppercase; margin: 10px 0 6px; }
-  dialog.sped .vchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
-  dialog.sped .vchip { cursor: pointer; user-select: none; font-size: .85em; padding: 3px 10px; border-radius: 12px;
-    border: 1px solid var(--divider-color); color: var(--primary-text-color); background: transparent; margin: 0; }
-  dialog.sped .vchip:hover { border-color: var(--primary-color); }
-  dialog.sped .vchip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
-  dialog.sped .vchip .n { opacity: .7; margin-left: 5px; }
-  dialog.sped .vchip.zero { opacity: .6; border-style: dashed; }
-  dialog.sped .vchip.zero.on { opacity: 1; }
-  dialog.sped .vchip.bad { border-color: var(--warning-color, orange); color: var(--warning-color, orange); }
-  dialog.sped .vchip.bad.on { background: var(--warning-color, orange); color: #fff; }
-  dialog.sped .vnote { color: var(--secondary-text-color); font-size: .8em; margin: 0 0 6px; }
   dialog.sped .prow { display: flex; align-items: center; gap: 4px; }
   dialog.sped .prow input { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; color: var(--primary-text-color);
     background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none; border-bottom: 1px solid var(--divider-color);
@@ -1401,21 +1396,15 @@ const LABELS = {
   show_group_selector: "Show group-by selector on card", list_rows: "Max visible rows",
   tap_action: "Tap action", diagnostics_button: "Show diagnostics (F12) button",
   icon_tap_action: "Icon tap action", toggle_all_button: "Show toggle-all button", popout: "Show the full-size (pop-out) button",
-  states: "State values", state_min: "Numeric state ≥", state_max: "Numeric state ≤",
-  device_classes: "Device classes", units: "Units", state_for: "In current state for",
-  rule: "SB Watch rule (Count sensor)", rate: "Rate of change", rate_window: "Rate window",
+  device_classes: "Device classes", units: "Units",
+  rule: "SB Watch rule (Count sensor)",
 };
 const HELPERS = {
   labels: "If set, the entity — or the device it belongs to — must ALSO carry one of these labels.",
   areas: "If set, entities must ALSO be in one of these areas.",
-  states: "Comma-separated values and/or ranges: on, Detected, unavailable, <20, >=80, 40-60. Any one matching passes (OR). A Param Card's $p$ works here.",
   device_classes: "Comma-separated, e.g. battery, temperature. Entities must carry one of them (AND with the rest).",
-  units: "Comma-separated units of measurement, e.g. %, °F, W — exact match. Keeps a numeric range from sweeping in the wrong quantity.",
-  rate: "Comma-separated, comparator required: >0.5/h, <-2/h, >=1/m. Change of a numeric state per minute/hour/day; a sensor needs history at least as old as the window, else it never matches.",
-  rate_window: "Measure over this span instead of the rate's unit — e.g. 30m, 6h.",
-  rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor). When set, every filter field above is ignored — the rule owns the filter.",
-  state_for: "Time in the current state, e.g. 2h, 1h30m, 90s (bare number = minutes) = at least that long; <5m = changed within the last 5 minutes. Measured from last_changed, so it survives restarts.",
-  state_min: "Shorthand for one inclusive range; ranges in State values do the same and allow several. Only numeric states can satisfy a range.",
+  units: "Comma-separated units of measurement, e.g. %, °F, W — exact match.",
+  rule: "Show exactly the entities this rule holds ACTIVE right now (from its Count sensor) — e.g. batteries under 20 %. Picking a rule clears the selection above, and editing the selection clears the rule: the card has one source.",
   fixed_size: "Keep the card the height of Max visible rows even when fewer entities match, so neighbouring cards don't shift. In a sections view, fixed rows in the Layout tab do the same and also cap it.",
   list_rows: "Hard on-screen limit: the list shows this many rows and scrolls for the rest. Default 10.",
   sort_dir: "For Last changed: ascending = oldest first.",
@@ -1452,7 +1441,6 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
     if (this._form2) this._form2.hass = hass;
-    if (this._form2c) this._form2c.hass = hass;
     if (this._form3) this._form3.hass = hass;
     // hass ticks are frequent; the counts don't need sub-second freshness.
     const now = Date.now();
@@ -1477,70 +1465,31 @@ class SbEntityBrowserEditor extends HTMLElement {
     this._config = { ...this._config, ...patch };
     this._emit(now);
     this._scheduleOverview();
-    if (this._vchips && this._open === "matching") {
-      clearTimeout(this._vchipTimer);
-      this._vchipTimer = setTimeout(() => this._renderValueChips(), TYPING_QUIET_MS);
-    }
   }
 
-  // ---- state-value chips ----------------------------------------------------
-  // A states entry is either a WORD (a chip) or a range/number (the text box).
-  _isRangeish(s) { return /^(<=|<|>=|>)\s*-?\d|^-?\d+(\.\d+)?(\s*(\.\.|-)\s*-?\d+(\.\d+)?)?$/.test(String(s).trim()); }
-  _statesList() { return stateList(this._config.states); }
-  _extraStates() { return this._statesList().filter((s) => this._isRangeish(s)); }
-  _wordStates() { return this._statesList().filter((s) => !this._isRangeish(s)); }
-  _chipStates() { return this._wordStates(); }
-  _setStates(words, extraText) {
-    const extra = stateList(extraText).filter((s) => this._isRangeish(s));
-    const all = [...words, ...extra];
-    this._set({ states: all.length ? all : undefined });
-    this._vocabKey = null;                    // re-evaluate unmatched words
-    this._renderValueChips();
-  }
-  _renderValueChips() {
-    if (!this._vchips || !this._hass?.connection) return;
-    const scope = filterConfig(this._config);
-    delete scope.states; delete scope.state_min; delete scope.state_max; delete scope.state_for; delete scope.rate; delete scope.rate_window;
-    const key = JSON.stringify(scope);
-    if (key !== this._vocabKey) {
-      this._vocabKey = key;
-      this._vocab = null;
-      this._vnote.textContent = "Reading the vocabulary…";
-      this._hass.connection.sendMessagePromise({ type: "sb_filter/values", config: scope })
-        .then((r) => { if (this._vocabKey !== key) return; this._vocab = r.values || []; this._drawChips(); })
-        .catch(() => { if (this._vocabKey !== key) return; this._vocab = []; this._drawChips(); });
+  // The card has ONE source: SB Filter's selection, or an SB Watch rule. Picking
+  // a rule drops the selection; touching the selection drops the rule. (ha-form
+  // posts its whole data object, so compare against what is stored.)
+  _setSource(v, now = false) {
+    const c = this._config;
+    const filled = (x) => x !== undefined && x !== null && x !== "" && !(Array.isArray(x) && !x.length);
+    if (filled(v.rule) && v.rule !== c.rule) {
+      const clear = Object.fromEntries([...FILTER_KEYS, ...STATE_KEYS].map((k) => [k, undefined]));
+      this._set({ ...clear, rule: v.rule }, true);
+      this._syncForms();
       return;
     }
-    this._drawChips();
+    const touched = FILTER_KEYS.some((k) => k in v && JSON.stringify(v[k] ?? null) !== JSON.stringify(c[k] ?? null) && filled(v[k]));
+    if (touched && c.rule) {
+      this._set({ ...v, rule: undefined });
+      this._syncForms();
+      return;
+    }
+    this._set(v, now);
   }
-  _drawChips() {
-    const box = this._vchips; if (!box || !box.isConnected) return;
-    const vocab = this._vocab || [];
-    const words = this._wordStates();
-    const lower = words.map((w) => w.toLowerCase());
-    const isOn = (item) => lower.includes(String(item.value).toLowerCase()) || lower.includes(String(item.label).toLowerCase());
-    const CAP = 40;
-    const shown = vocab.slice(0, CAP);
-    const known = new Set(vocab.flatMap((i) => [String(i.value).toLowerCase(), String(i.label).toLowerCase()]));
-    const unknown = words.filter((w) => !known.has(w.toLowerCase()));
-    const hint = (w) => (this._unmatched || []).find((u) => u.value.toLowerCase() === w.toLowerCase())?.suggestions?.[0];
-    box.innerHTML =
-      shown.map((i) => `<span class="vchip ${isOn(i) ? "on" : ""} ${i.current ? "" : "zero"}" data-v="${esc(String(i.value))}" data-l="${esc(String(i.label))}" title="${esc(String(i.value))} — ${i.current} now, ${i.possible} can be">${esc(String(i.label))}<span class="n">${i.current}</span></span>`).join("") +
-      unknown.map((w) => `<span class="vchip bad on" data-bad="${esc(w)}" title="No selected entity can be in this state — click to remove">${esc(w)}${hint(w) ? ` <span class="n">→ ${esc(hint(w))}?</span>` : ""} ✕</span>`).join("");
-    const hidden = vocab.length - shown.length;
-    this._vnote.textContent = vocab.length
-      ? `Tick the states to match — the number is how many selected entities are in it now.${hidden > 0 ? ` ${hidden} rarer values not shown; type them in the box.` : ""}`
-      : "No vocabulary yet — add a pattern, label, area or device class above.";
-    box.querySelectorAll(".vchip[data-v]").forEach((el) => el.addEventListener("click", () => {
-      const v = el.dataset.v, l = el.dataset.l;
-      let next = this._wordStates().filter((w) => w.toLowerCase() !== v.toLowerCase() && w.toLowerCase() !== l.toLowerCase());
-      if (!el.classList.contains("on")) next.push(v);            // store the RAW value
-      this._setStates(next, this._vextra ? this._vextra.value : "");
-    }));
-    box.querySelectorAll(".vchip[data-bad]").forEach((el) => el.addEventListener("click", () => {
-      const w = el.dataset.bad;
-      this._setStates(this._wordStates().filter((x) => x.toLowerCase() !== w.toLowerCase()), this._vextra ? this._vextra.value : "");
-    }));
+  _syncForms() {
+    for (const f of [this._form, this._form2, this._form3]) if (f) f.data = this._config;
+    if (this._patRows) this._renderPatterns();
   }
 
   // ---- overview -----------------------------------------------------------
@@ -1552,12 +1501,13 @@ class SbEntityBrowserEditor extends HTMLElement {
   // Live counts come from SB Filter (one-shot match); cached per filter, refreshed async.
   _total() {
     if (this._config.rule) { const st = this._hass?.states?.[this._config.rule]; return st ? (st.attributes.entity_ids || []).length : null; }
+    if (stateKeysIn(this._config).length) return 0;
     if (!this._hass?.connection) return null;
     const key = JSON.stringify(filterConfig(this._config));
     if (key !== this._totalKey) {
       this._totalKey = key; this._totalN = undefined;
       this._hass.connection.sendMessagePromise({ type: "sb_filter/match", config: filterConfig(this._config) })
-        .then((r) => { if (this._totalKey !== key) return; this._totalN = r.ids.length; this._unreadable = r.unreadable || []; this._unmatched = r.unmatched_values || []; this._renderOverview(); })
+        .then((r) => { if (this._totalKey !== key) return; this._totalN = r.ids.length; this._unreadable = r.unreadable || []; this._renderOverview(); })
         .catch((e) => { if (this._totalKey !== key) return; this._totalN = null; this._filterError = e?.code === "unknown_command" ? "missing" : String(e?.message || e); this._renderOverview(); });
     }
     return this._totalN ?? null;
@@ -1569,7 +1519,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     const pats = (c.patterns || []).filter((p) => p && p.trim());
     const total = this._total();
     if (c.rule) return [
-      ["Rule", `<code>${esc(c.rule)}</code> — shows what the rule holds active; filter fields ignored`],
+      ["Rule", `<code>${esc(c.rule)}</code> — shows what the rule holds active`],
       ["Matches now", total == null ? `<span class="warn">rule sensor not found</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}`],
     ];
     return [
@@ -1578,14 +1528,9 @@ class SbEntityBrowserEditor extends HTMLElement {
       ...((c.areas || []).length ? [["Areas", `${c.areas.length} <span class="chip">AND</span>`]] : []),
       ...(stateList(c.device_classes).length ? [["Device class", stateList(c.device_classes).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
       ...(stateList(c.units).length ? [["Unit", stateList(c.units).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
-      ...(c.state_for ? [["In state for", `<code>${esc(String(c.state_for))}</code> <span class="chip">AND</span>`]] : []),
-      ...(stateList(c.rate).length ? [["Rate", stateList(c.rate).map((s) => `<code>${esc(s)}</code>`).join(" <span class=\"chip\">OR</span> ") + (c.rate_window ? ` over <code>${esc(String(c.rate_window))}</code>` : "") + ` <span class="chip">AND</span>`]] : []),
-      ...((stateList(c.states).length || (c.state_min != null && c.state_min !== "") || (c.state_max != null && c.state_max !== "")) ? [["State", [
-        ...stateList(c.states).map((s) => `<code>${esc(s)}</code>`),
-        (c.state_min != null && c.state_min !== "") || (c.state_max != null && c.state_max !== "") ? `<code>${esc(String(c.state_min ?? "…"))} – ${esc(String(c.state_max ?? "…"))}</code>` : "",
-      ].filter(Boolean).join(" <span class=\"chip\">OR</span> ") + ` <span class="chip">AND</span>`]] : []),
+      ...(stateList(c.classes).length ? [["Class", stateList(c.classes).map((s) => `<code>${esc(s)}</code>`).join(" ") + ` <span class="chip">AND</span>`]] : []),
+      ...(stateKeysIn(c).length ? [["State filter", `<span class="warn">${esc(stateKeysIn(c).join(", "))} — moved to SB Watch; the card shows nothing until it is removed</span> <button class="dropstate">Remove</button>`]] : []),
       ...((this._unreadable || []).length ? [["Unreadable", `<span class="warn">${esc(this._unreadable.join(", "))}</span>`]] : []),
-      ...((this._unmatched || []).map((u) => ["State value", `<span class="warn"><code>${esc(u.value)}</code> matches nothing${u.suggestions.length ? ` — did you mean ${u.suggestions.map((s) => `<code>${esc(s)}</code>`).join(" or ")}?` : ""}</span>`])),
       ...(this._filterError === "missing" ? [["SB Filter", `<span class="warn">integration not installed — counts and matching need it</span>`]] : []),
       ["Matches now", total == null ? `<span class="off">…</span>` : `<b>${total}</b> entit${total === 1 ? "y" : "ies"}${total > 500 ? ` <span class="warn">— large; consider a tighter pattern</span>` : ""}`],
     ];
@@ -1627,13 +1572,13 @@ class SbEntityBrowserEditor extends HTMLElement {
     const sec = (id, title, rows) => `<div class="sec"><h3>${title}<button data-sec="${id}">Edit</button></h3>
       <div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div></div>`;
     this._ov.innerHTML =
-      sec("matching", "Matching", this._summaryMatching()).replace("</div></div>", `</div>${this._ruleBar()}</div>`) +
+      sec("matching", "Matching", this._summaryMatching()) +
       sec("display", "Display", this._summaryDisplay()) +
       sec("controls", "Controls", this._summaryControls()) +
-      `<div class="note">Patterns, labels and areas are the card's identity. Words in one pattern are ANDed — put an SB Param Card's <code>$name$</code> inside a pattern (“fp300 $q$”) to let a dropdown narrow it; the search box narrows on top.</div>`;
+      `<div class="note">The card shows ONE source: SB Filter's selection (patterns, labels, areas, device class, unit — which entities), or an SB Watch rule (which of them are in a given state, e.g. under 20 %). Words in one pattern are ANDed — put an SB Param Card's <code>$name$</code> inside a pattern (“fp300 $q$”) to let a dropdown narrow it; the search box narrows on top.</div>`;
     this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
-    const sv = this._ov.querySelector("button.saverule"); if (sv) sv.addEventListener("click", () => this._openSaveRule());
-    const us = this._ov.querySelector("button.userule"); if (us) us.addEventListener("click", () => { this._set({ rule: this._savedRule.sensor }, true); this._savedRule = null; this._renderOverview(); });
+    const ds = this._ov.querySelector("button.dropstate");
+    if (ds) ds.addEventListener("click", () => { this._set(Object.fromEntries(STATE_KEYS.map((k) => [k, undefined])), true); this._totalKey = null; this._renderOverview(); });
   }
 
   _render() {
@@ -1645,68 +1590,6 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._ov = document.createElement("div");
       this.appendChild(this._ov);
     }
-    this._renderOverview();
-  }
-
-  // ---- save this card's filter as an SB Watch rule ------------------------------
-  _ruleBar() {
-    if (this._config.rule) return "";
-    if (this._savedRule) return `<div class="rulebar"><span class="ok">Saved as rule “${esc(this._savedRule.name)}”</span>${this._savedRule.sensor ? `<code>${esc(this._savedRule.sensor)}</code><button class="userule">Show this rule in the card</button>` : ""}</div>`;
-    if (this._ruleError) return `<div class="rulebar"><span class="warn">${esc(this._ruleError)}</span><button class="saverule">Try again</button></div>`;
-    if (filterLooksEmpty(this._config)) return "";
-    return `<div class="rulebar"><button class="saverule">Save as SB Watch rule…</button><span class="off">a rule that watches exactly this filter — add a dwell and actions in its settings</span></div>`;
-  }
-
-  _openSaveRule() {
-    this._closeDialog(false);
-    const d = document.createElement("dialog"); d.className = "sped";
-    d.innerHTML = `<div class="ph"><span>Save as SB Watch rule</span><button class="x" title="Close">✕</button></div>
-      <div class="pb"><div class="sub">Rule name</div><input class="rname" placeholder="e.g. Batteries low" value="${esc(this._config.title || "")}">
-        <div class="note" style="margin-top:8px">Creates a rule with this card's filter. Its dwell, notification and actions are set afterwards in the rule's settings (Settings → Devices &amp; services → SB Watch).</div>
-        <div class="note warn saveerr" style="display:none"></div></div>
-      <div class="pf"><button class="cancel">Cancel</button><button class="done">Create rule</button></div>`;
-    this.appendChild(d);
-    const close = () => { try { d.close(); } catch (e) { /* closed */ } d.remove(); };
-    d.querySelector(".x").addEventListener("click", close);
-    d.querySelector(".cancel").addEventListener("click", close);
-    const input = d.querySelector(".rname"), err = d.querySelector(".saveerr");
-    d.querySelector(".done").addEventListener("click", async () => {
-      const name = input.value.trim();
-      if (!name) { err.style.display = ""; err.textContent = "Give the rule a name."; return; }
-      d.querySelector(".done").disabled = true;
-      try { await this._createRule(name); close(); }
-      catch (e) { err.style.display = ""; err.textContent = String(e?.message || e); d.querySelector(".done").disabled = false; }
-    });
-    d.showModal(); input.focus(); input.select();
-  }
-
-  // Drives SB Watch's one-step config flow (sb_watch ≥ 0.10.0). The card's whole
-  // filter goes in as the advanced YAML — JSON is YAML, so nothing is lost to
-  // text-field conversions. SB Watch absorbs what its form can express into
-  // selection chips and trigger rows (states → triggers with the time-in-state
-  // as their duration) and keeps the rest as YAML.
-  async _createRule(name) {
-    const hass = this._hass;
-    const f = filterConfig(this._config);
-    if (f.states) f.states = stateList(f.states);
-    let flow;
-    try { flow = await hass.callApi("POST", "config/config_entries/flow", { handler: "sb_watch" }); }
-    catch (e) { throw new Error("SB Watch integration not installed (or you are not an admin)"); }
-    if (flow.type !== "form") throw new Error(`Unexpected flow reply: ${flow.type}${flow.reason ? " — " + flow.reason : ""}`);
-    const done = await hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { name, advanced: { filter_yaml: JSON.stringify(f), problem: true }, actions: { action: "none" } });
-    if (done.type !== "create_entry") { try { await hass.callApi("DELETE", `config/config_entries/flow/${flow.flow_id}`); } catch (e) { /* already gone */ } }
-    if (done.type !== "create_entry") {
-      const ph = done.description_placeholders?.unmatched;
-      throw new Error(done.errors ? `Rejected: ${Object.values(done.errors).join(", ")}${ph ? " — " + ph : ""}` : `Unexpected step ${done.step_id}`);
-    }
-    const entryId = done.result?.entry_id;
-    let sensor = null;
-    try {
-      const reg = await hass.connection.sendMessagePromise({ type: "config/entity_registry/list" });
-      sensor = (reg.find((e) => e.config_entry_id === entryId && e.entity_id.startsWith("sensor.")) || {}).entity_id || null;
-    } catch (e) { /* the bar just omits the sensor */ }
-    this._savedRule = { name, sensor };
-    this._ruleError = null;
     this._renderOverview();
   }
 
@@ -1735,7 +1618,7 @@ class SbEntityBrowserEditor extends HTMLElement {
     const d = this._dlg;
     if (!d) return;
     this._dlg = null; this._open = null; this._form = null; this._patRows = null; this._patWrap = null;
-    this._vchips = null; this._vnote = null; this._vextra = null; this._form2c = null; clearTimeout(this._vchipTimer);
+    this._form2 = null; this._form3 = null;
     clearTimeout(this._emitTimer);
     if (restore && this._snap) { this._config = this._snap; }
     this._emit(true);                       // flush: a pending debounced edit, or the restore
@@ -1752,7 +1635,9 @@ class SbEntityBrowserEditor extends HTMLElement {
     f.computeHelper = (s) => HELPERS[s.name];
     f.schema = schema;
     f.data = this._config;
-    f.addEventListener("value-changed", (e) => { e.stopPropagation(); onChange(e.detail.value); });
+    // only this form's own fields: ha-form posts its whole (possibly stale) data object
+    const names = schema.map((x) => x.name);
+    f.addEventListener("value-changed", (e) => { e.stopPropagation(); onChange(Object.fromEntries(names.map((n) => [n, e.detail.value[n]]))); });
     return f;
   }
 
@@ -1769,39 +1654,18 @@ class SbEntityBrowserEditor extends HTMLElement {
       this._form = this._mkForm([
         { name: "labels", selector: { label: { multiple: true } } },
         { name: "areas", selector: { area: { multiple: true } } },
-      ], (v) => this._set(v));
+      ], (v) => this._setSource(v));
       body.appendChild(this._form);
-      const subR = document.createElement("div"); subR.className = "sub"; subR.textContent = "Or: an SB Watch rule"; body.appendChild(subR);
-      this._form3 = this._mkForm([
-        { name: "rule", selector: { entity: { filter: { integration: "sb_watch", domain: "sensor" } } } },
-      ], (v) => this._set(v));
-      body.appendChild(this._form3);
-      const sub2 = document.createElement("div"); sub2.className = "sub"; sub2.textContent = "State match"; body.appendChild(sub2);
       this._form2 = this._mkForm([
         { name: "device_classes", selector: { text: {} } },
         { name: "units", selector: { text: {} } },
-      ], (v) => this._set(v));
+      ], (v) => this._setSource(v));
       body.appendChild(this._form2);
-      // State values: chips from SB Filter's vocabulary of what the other fields select
-      // (raw value stored, translated label shown), plus a box for ranges and numbers.
-      const subV = document.createElement("div"); subV.className = "sub"; subV.textContent = "State values"; body.appendChild(subV);
-      this._vnote = document.createElement("div"); this._vnote.className = "vnote"; body.appendChild(this._vnote);
-      this._vchips = document.createElement("div"); this._vchips.className = "vchips"; body.appendChild(this._vchips);
-      const erow = document.createElement("div"); erow.className = "prow";
-      this._vextra = document.createElement("input"); this._vextra.type = "text"; this._vextra.placeholder = "Ranges and numbers: <20, >=80, 40-60, 100";
-      this._vextra.value = this._extraStates().join(", ");
-      this._vextra.addEventListener("change", () => this._setStates(this._chipStates(), this._vextra.value));
-      erow.appendChild(this._vextra); body.appendChild(erow);
-      this._vocabKey = null;
-      this._renderValueChips();
-      this._form2c = this._mkForm([
-        { name: "state_for", selector: { text: {} } },
-        { name: "rate", selector: { text: {} } },
-        { name: "rate_window", selector: { text: {} } },
-        { name: "state_min", selector: { number: { mode: "box", step: "any" } } },
-        { name: "state_max", selector: { number: { mode: "box", step: "any" } } },
-      ], (v) => this._set(v));
-      body.appendChild(this._form2c);
+      const subR = document.createElement("div"); subR.className = "sub"; subR.textContent = "Or: an SB Watch rule"; body.appendChild(subR);
+      this._form3 = this._mkForm([
+        { name: "rule", selector: { entity: { filter: { integration: "sb_watch", domain: "sensor" } } } },
+      ], (v) => this._setSource(v));
+      body.appendChild(this._form3);
     } else if (this._open === "display") {
       this._form = this._mkForm([
         { name: "title", selector: { text: {} } },
@@ -1850,7 +1714,7 @@ class SbEntityBrowserEditor extends HTMLElement {
         if (input.value !== value) return;   // typed on since
         count.textContent =
           n == null
-            ? "Words match ids AND friendly names (any order, case-insensitive, * wildcards) — or an entity\u2019s exact state (“CR2450”). A $name$ from a wrapping SB Param Card works here too."
+            ? "Words match ids AND friendly names (any order, case-insensitive, * wildcards). A $name$ from a wrapping SB Param Card works here too."
             : `Matches ${n} entit${n === 1 ? "y" : "ies"} now`;
       });
     });
@@ -1886,7 +1750,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       input.addEventListener("input", () => {
         const arr = [...(this._config.patterns || [])];
         arr[i] = input.value;
-        this._set({ patterns: arr });
+        this._setSource({ patterns: arr });
         this._scheduleCounts();
       });
       const del = document.createElement("ha-icon");
@@ -1896,7 +1760,7 @@ class SbEntityBrowserEditor extends HTMLElement {
       del.addEventListener("click", () => {
         const arr = [...(this._config.patterns || [])];
         arr.splice(i, 1);
-        this._set({ patterns: arr }, true);
+        this._setSource({ patterns: arr }, true);
         this._renderPatterns();
       });
       row.append(input, del);
