@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.34.2";
+const VERSION = "0.34.3";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -1087,7 +1087,7 @@ class SbEntityBrowser extends HTMLElement {
             ? `<button class="sbk-kb diag-btn ${this._diag ? "on-state" : ""}" title="${this._diag ? "Hide" : "Show"} diagnostics" aria-label="Diagnostics" aria-pressed="${this._diag ? "true" : "false"}"><ha-icon icon="mdi:stethoscope"></ha-icon></button>`
             : ""}
           ${this._isPopout ? `<button class="sbk-kb popclose" title="Close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button>` : cfg.popout === false ? "" : `<button class="sbk-kb popout" title="Open full size" aria-label="Open full size"><ha-icon icon="mdi:arrow-expand-all"></ha-icon></button>`}
-          ${this._isPopout ? "" : `<button class="sbk-kb collapse" title="${this._collapsed ? "Show the entries" : "Hide the entries"}" aria-label="${this._collapsed ? "Show the entries" : "Hide the entries"}"><ha-icon icon="${this._collapsed ? "mdi:chevron-down" : "mdi:chevron-up"}"></ha-icon></button>`}
+          ${this._isPopout ? "" : `<button class="sbk-kb collapse" title="${this._collapsed ? "Show the entries" : "Hide the entries"}" aria-label="${this._collapsed ? "Show the entries" : "Hide the entries"}"><ha-icon icon="${this._collapsed ? "mdi:chevron-right" : "mdi:chevron-down"}"></ha-icon></button>`}
         </div>
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}

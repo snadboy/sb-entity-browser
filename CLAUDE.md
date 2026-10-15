@@ -615,3 +615,6 @@ User clicked the Front Door lock icon: "The code for lock.… doesn't match patt
 
 ## v0.34.2 (2026-10-15)
 Kit loader: if a page missed the SB UI Kit (opened while HA was restarting, or a slow device) the card fetches it itself after 3 s, and redraws if it arrives after the 15 s "not loaded" message.
+
+## v0.34.3 (2026-10-15)
+Collapse symbols (user): > (mdi:chevron-right) when collapsed, V (mdi:chevron-down) when expanded — everywhere: header fold, Scheduler step disclose, Entity Browser collapse, SB Watch editor sections (rotate 90° when open).
