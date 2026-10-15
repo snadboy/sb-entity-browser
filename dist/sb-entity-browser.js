@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.32.0";
+const VERSION = "0.33.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -34,6 +34,26 @@ const canToggle = (hass, id) => {
 };
 // "Currently on" for the toggle-all summary: anything not in a resting state.
 const OFFISH = new Set(["off", "closed", "idle", "standby", "paused", "docked", "unavailable", "unknown"]);
+
+// What a "toggle" tap does to ONE entity, the way HA's own tap action does it: a lock
+// locks / unlocks, a cover or valve opens / closes, a button is pressed, anything with a
+// `toggle` service toggles. null = nothing sensible (the click then falls to the row).
+// (0.32.0 armed the icon only for domains with a `toggle` service, so a lock's icon set
+// to toggle silently opened More info — locks have lock/unlock, no toggle.)
+// The toggle-ALL button keeps canToggle: it must never mass-unlock doors.
+const toggleCall = (hass, id) => {
+  const st = hass?.states?.[id];
+  if (!st || st.state === "unavailable" || st.state === "unknown") return null;
+  const dom = id.split(".")[0], svc = hass.services?.[dom] || {}, s = st.state;
+  const pick = (service, label) => (svc[service] ? { domain: dom, service, label } : null);
+  if (dom === "lock") return s === "locked" ? pick("unlock", "Unlock") : pick("lock", "Lock");
+  if (dom === "cover") return ["open", "opening"].includes(s) ? pick("close_cover", "Close") : pick("open_cover", "Open");
+  if (dom === "valve") return ["open", "opening"].includes(s) ? pick("close_valve", "Close") : pick("open_valve", "Open");
+  if (dom === "button" || dom === "input_button") return pick("press", "Press");
+  if (dom === "scene") return pick("turn_on", "Activate");
+  if (svc.toggle) return { domain: dom, service: "toggle", label: OFFISH.has(s) ? "Turn on" : "Turn off" };
+  return null;
+};
 
 // Implied leading/trailing wildcards: "battery" matches *battery*.
 const globToRegex = (glob, flags) =>
@@ -588,6 +608,9 @@ class SbEntityBrowser extends HTMLElement {
       if (sec) { const v = this._secondaryText(row.dataset.entity, st); if (sec.textContent !== v) sec.textContent = v; }
       const dl = row.querySelector(".diag-line");
       if (dl) dl.textContent = `${row.dataset.entity} · raw ${st.state} · updated ${relTime(st.last_updated)}`;
+      // a toggle's tooltip follows the state (Lock ↔ Unlock)
+      const ic = row.querySelector(".icon"), tip = this._iconTip(row.dataset.entity);
+      if (ic && ic.title !== tip) ic.title = tip;
     }
   }
 
@@ -613,15 +636,31 @@ class SbEntityBrowser extends HTMLElement {
   _iconAction(id) {
     const a = this._config.icon_tap_action;
     if (!a || !a.action || a.action === "none") return null;
-    if (a.action === "toggle" && !canToggle(this._hass, id)) return null;
+    if (a.action === "toggle" && !toggleCall(this._hass, id)) return null;
     return a;
   }
+
+  // Tooltip text: what a click on the row / the icon will do (state-aware for a toggle).
+  _tipFor(id, a) {
+    const act = a?.action || "more-info";
+    if (act === "none") return "";
+    if (act === "toggle") return toggleCall(this._hass, id)?.label || "";
+    if (act === "navigate") return `Open ${a.navigation_path || "/"}`;
+    if (act === "url") return `Open ${a.url_path || "link"}`;
+    if (act === "perform-action" || act === "call-service") return `Run ${a.perform_action || a.service || "action"}`;
+    return { "more-info": "Show details", history: "Show history", assist: "Open Assist" }[act] || "";
+  }
+  _rowTip(id) { return this._tipFor(id, this._config.tap_action || { action: "more-info" }); }
+  _iconTip(id) { const ia = this._iconAction(id); return ia ? this._tipFor(id, ia) : this._rowTip(id); }
 
   _handleTap(id, a = this._config.tap_action || { action: "more-info" }) {
     const act = a.action || "more-info";
     if (act === "none") return;
     if (act === "more-info") fire(this, "hass-more-info", { entityId: id });
-    else if (act === "toggle") this._hass.callService("homeassistant", "toggle", {}, { entity_id: id });
+    else if (act === "toggle") {
+      const t = toggleCall(this._hass, id);
+      if (t) this._hass.callService(t.domain, t.service, {}, { entity_id: id });
+    }
     else if (act === "assist") fire(this, "show-dialog", { dialogTag: "ha-voice-command-dialog", dialogImport: () => import("/frontend_latest/ha-voice-command-dialog.js").catch(() => {}), dialogParams: {} });
     else if (act === "history") {
       history.pushState(null, "", `/history?entity_id=${id}`);
@@ -829,8 +868,8 @@ class SbEntityBrowser extends HTMLElement {
       const sec = compact ? "" : this._secondaryText(id, st);
       const iact = !!this._iconAction(id);
       return `
-        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0">
-          <span class="icon ph"></span>
+        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0" title="${esc(this._rowTip(id))}">
+          <span class="icon ph" title="${esc(this._iconTip(id))}"></span>
           <div class="body">
             <div class="name">${this._segColor?.has(id) ? `<i class="dot" style="background:${this._segColor.get(id)}"></i>` : ""}${esc(name(id, st))}</div>
             ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
@@ -1280,6 +1319,7 @@ class SbEntityBrowser extends HTMLElement {
       icon.className = "icon";
       icon.hass = h;
       icon.stateObj = st;
+      icon.title = ph.title;
       ph.replaceWith(icon);
     }
   }

@@ -600,3 +600,7 @@ Monitor's 5 cards migrated to named filters (Occupancy sensors, Matter hubs and
 repeaters, Rack devices, Calendars, FP300 occupancy and desk bulb); backup in the
 session scratchpad. Verified headless: each card = its filter's count, groups and
 wattage bars intact, New filter… creates and selects, Convert pre-fills.
+
+## v0.33.0 (2026-10-14) — toggle a lock; tooltips
+
+User: a Locks browser with icon tap = toggle opened More info on the icon. Cause: the icon action armed only for domains with a `toggle` service; locks have lock/unlock. Now `toggleCall()` does what HA's own toggle tap action does: lock ↔ unlock by state, cover/valve open ↔ close, button press, scene activate, else `<domain>.toggle`. The toggle-ALL button keeps canToggle (never mass-unlocks). Rows and icons carry a `title` saying what a click does; the icon's follows the state (Unlock / Lock). Tested with a recording callService: no lock was touched.
