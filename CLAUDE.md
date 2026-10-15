@@ -604,3 +604,7 @@ wattage bars intact, New filter… creates and selects, Convert pre-fills.
 ## v0.33.0 (2026-10-14) — toggle a lock; tooltips
 
 User: a Locks browser with icon tap = toggle opened More info on the icon. Cause: the icon action armed only for domains with a `toggle` service; locks have lock/unlock. Now `toggleCall()` does what HA's own toggle tap action does: lock ↔ unlock by state, cover/valve open ↔ close, button press, scene activate, else `<domain>.toggle`. The toggle-ALL button keeps canToggle (never mass-unlocks). Rows and icons carry a `title` saying what a click does; the icon's follows the state (Unlock / Lock). Tested with a recording callService: no lock was touched.
+
+## v0.34.0 (2026-10-14) — the shared SB style
+
+User: "Should SB Entity Browser be using the kit also?" → yes, partly. Header = kit head (title · "N entities" · round icon buttons with tooltips: fold/unfold, toggle-all, diagnostics, pop-out, collapse — now real <button>s, same classes so the wiring is unchanged). Rows = kit rows (tinted state icon: armed = active, bad = unavailable/unknown, idle; name; secondary) with the STATE kept on the right and the configurable tap / icon actions unchanged. `density: compact` → `.sbk-row.dense` + `.sbk-ico.sm`. The icon circle (`.ihit`) is the icon-action target. Search / chips / group headers / bars keep a 16 px gutter; rows run full width. Requires sb_ui_kit ≥ 0.2.0 (sb_filter 0.8.1 depends on it). Verified in hui-view with a recording callService.

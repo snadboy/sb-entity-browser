@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.33.0";
+const VERSION = "0.34.0";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -22,6 +22,19 @@ const SECONDARY_OPTIONS = [
 
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+
+// ---- the shared SB row style: window.SBKit, from the SB UI Kit integration ----------
+// Header and rows look like SB Scheduler / SB Watch / SB Background. Loaded on every page by
+// the sb_ui_kit integration, a manifest dependency of sb_filter (which this card requires).
+const kit = () => (window.SBKit && window.SBKit.api >= 1 ? window.SBKit : null);
+let kitPromise = null;
+const whenKit = () => kitPromise || (kitPromise = new Promise((resolve) => {
+  if (kit()) { resolve(kit()); return; }
+  const on = () => { if (kit()) { window.removeEventListener("sb-ui-kit-ready", on); resolve(kit()); } };
+  window.addEventListener("sb-ui-kit-ready", on);
+  setTimeout(() => resolve(kit()), 15000);     // still null: not installed
+}));
+const KIT_MISSING = `<div style="padding: 16px; color: var(--error-color)">The <b>SB UI Kit</b> integration is not loaded — install “SB UI Kit” from HACS and restart Home Assistant.</div>`;
 
 // Toggleable = the entity's domain registers a `toggle` service on THIS HA
 // (read from hass.services, not a hard-coded list — a custom integration
@@ -609,7 +622,7 @@ class SbEntityBrowser extends HTMLElement {
       const dl = row.querySelector(".diag-line");
       if (dl) dl.textContent = `${row.dataset.entity} · raw ${st.state} · updated ${relTime(st.last_updated)}`;
       // a toggle's tooltip follows the state (Lock ↔ Unlock)
-      const ic = row.querySelector(".icon"), tip = this._iconTip(row.dataset.entity);
+      const ic = row.querySelector(".ihit"), tip = this._iconTip(row.dataset.entity);
       if (ic && ic.title !== tip) ic.title = tip;
     }
   }
@@ -683,8 +696,23 @@ class SbEntityBrowser extends HTMLElement {
     }
   }
 
+  /** The shared style is in: adopt its sheet (once per shadow root) and go on. Not yet: show
+   *  "Loading…" and render again when the kit arrives — or say it is not installed. */
+  _kitReady() {
+    const K = kit();
+    if (K) {
+      if (K.sheet && !this.shadowRoot.adoptedStyleSheets.includes(K.sheet)) this.shadowRoot.adoptedStyleSheets = [...this.shadowRoot.adoptedStyleSheets, K.sheet];
+      return true;
+    }
+    if (!this._kitWaiting) { this._kitWaiting = true; whenKit().then((k) => { this._kitMissing = !k; if (k) this._render(); else this._kitReady(); }); }
+    const html = this._kitMissing ? KIT_MISSING : `<div style="padding: 16px; color: var(--secondary-text-color)">Loading…</div>`;
+    this.shadowRoot.innerHTML = `<ha-card>${html}</ha-card>`;
+    return false;
+  }
+
   _render() {
     if (this._popDlg) { this._dirty = true; return; }      // never rebuild under the pop-out (it lives in this shadow root)
+    if (!this._kitReady()) return;
     this._dirty = false;
     this._lastRender = Date.now();
     this._sig = this._signature();
@@ -868,11 +896,11 @@ class SbEntityBrowser extends HTMLElement {
       const sec = compact ? "" : this._secondaryText(id, st);
       const iact = !!this._iconAction(id);
       return `
-        <div class="row ${bad ? "bad" : ""} ${act ? "act" : ""} ${compact ? "cmp" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0" title="${esc(this._rowTip(id))}">
-          <span class="icon ph" title="${esc(this._iconTip(id))}"></span>
-          <div class="body">
-            <div class="name">${this._segColor?.has(id) ? `<i class="dot" style="background:${this._segColor.get(id)}"></i>` : ""}${esc(name(id, st))}</div>
-            ${sec ? `<div class="sec">${esc(sec)}</div>` : ""}
+        <div class="sbk-row row ${compact ? "dense" : ""} ${bad ? "bad" : ""} ${act ? "act" : ""} ${iact ? "iact" : ""}" data-entity="${esc(id)}" role="button" tabindex="0" title="${esc(this._rowTip(id))}">
+          <span class="sbk-ico ${compact ? "sm" : ""} ${bad ? "bad" : act ? "armed" : "idle"} ihit ${iact ? "hit" : ""}" title="${esc(this._iconTip(id))}"><span class="ph"></span></span>
+          <div class="sbk-txt body">
+            <div class="sbk-t name">${this._segColor?.has(id) ? `<i class="dot" style="background:${this._segColor.get(id)}"></i>` : ""}${esc(name(id, st))}</div>
+            ${sec ? `<div class="sbk-s sec">${esc(sec)}</div>` : ""}
             ${tpl && !compact ? `<div class="jinja">${esc(this._tres.get(id) ?? "")}</div>` : ""}
             ${this._diag ? `<div class="diag-line">${esc(id)} · raw ${esc(st.state)} · updated ${esc(relTime(st.last_updated))}</div>` : ""}
           </div>
@@ -941,27 +969,17 @@ class SbEntityBrowser extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; height: 100%; }
-        ha-card { padding: 12px 16px 8px; box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
+        ha-card { padding: 0 0 8px; box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
         ha-card > * { flex: none; }
         ha-card > .list { flex: 1 1 auto; }
         /* Collapsed = title + chips stay (the chips still say what the states are); entries, search and notes go. */
         ha-card.collapsed > :not(.header):not(.chips) { display: none !important; }
-        .hbtn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 22px; padding: 3px; border-radius: 50%; border: 1px solid var(--divider-color); }
-        .hbtn:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .08); }
         dialog.sebpop { border: none; border-radius: 12px; padding: 0; width: min(960px, 94vw); height: min(90vh, 1400px); background: transparent; box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden; }
         dialog.sebpop::backdrop { background: rgba(0,0,0,.5); }
         dialog.sebpop sb-entity-browser { display: block; height: 100%; }
-        .header { display: flex; align-items: center; gap: 8px; }
-        .title { font-size: 1.2em; font-weight: 500; flex: 1; color: var(--primary-text-color); }
-        .count { color: var(--secondary-text-color); font-size: .85em; }
-        .diag-btn, .fold-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 20px; padding: 4px; border-radius: 50%; }
-        .diag-btn.on { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 33,150,243), .12); }
-        .tall-btn { cursor: pointer; color: var(--secondary-text-color); --mdc-icon-size: 22px; padding: 3px; border-radius: 50%; }
-        .tall-btn:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .08); }
-        .tall-btn.dim { opacity: .35; cursor: default; }
+        .header { flex-wrap: wrap; }
         /* an armed icon is its own control: pointer + a ring on hover */
-        .row.iact .icon { cursor: pointer; border-radius: 50%; padding: 4px; margin: -4px; }
-        .row.iact .icon:hover { background: rgba(var(--rgb-primary-color, 33,150,243), .15); }
+
         .gsel { font-size: .8em; color: var(--secondary-text-color); background: var(--card-background-color, transparent);
                 border: 1px solid var(--divider-color); border-radius: 12px; padding: 2px 6px; cursor: pointer;
                 outline-color: var(--primary-color); color-scheme: light dark; }
@@ -969,11 +987,11 @@ class SbEntityBrowser extends HTMLElement {
            themes get light-gray text on a white popup. */
         .gsel option { background: var(--card-background-color, Canvas);
                        color: var(--primary-text-color, CanvasText); }
-        .searchbox { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 8px 12px; font: inherit;
+        .searchbox { width: calc(100% - 32px); box-sizing: border-box; margin: 4px 16px 2px; padding: 8px 12px; font: inherit;
                      color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12));
                      border: none; border-bottom: 1px solid var(--divider-color); border-radius: 4px 4px 0 0;
                      outline-color: var(--primary-color); }
-        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 16px 4px; }
         .chip { cursor: pointer; user-select: none; font-size: .85em; padding: 3px 10px; border-radius: 12px;
                 border: 1px solid var(--divider-color); color: var(--secondary-text-color);
                 transition: background .12s, color .12s; }
@@ -988,7 +1006,7 @@ class SbEntityBrowser extends HTMLElement {
                   color: var(--primary-text-color); padding: 3px 8px; }
         .dash { color: var(--secondary-text-color); align-self: center; }
         .grp { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
-               padding: 10px 0 2px; color: var(--secondary-text-color); font-size: .78em;
+               padding: 12px 16px 4px; color: var(--secondary-text-color); font-size: .78em;
                font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
         .grp .n { opacity: .6; font-weight: 400; }
         .gbar { margin-left: auto; width: 140px; max-width: 40%; height: 8px; display: flex; border-radius: 4px;
@@ -999,18 +1017,14 @@ class SbEntityBrowser extends HTMLElement {
         .gval { font-weight: 400; text-transform: none; letter-spacing: 0; min-width: 4em; text-align: right; }
         .gbar:not(:has(+ .gval)) { margin-right: 4px; }
         .grp ha-icon { --mdc-icon-size: 16px; }
-        .row { display: flex; align-items: center; gap: 12px; padding: 7px 0; cursor: pointer; border-radius: 8px; }
-        .row.cmp { padding: 3px 0; }
+        .row { gap: 12px; padding: 6px 16px 6px 12px; cursor: pointer; }
         .list.anim .row { animation: seb-fade .18s ease-out; }
         @keyframes seb-fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
-        .row:hover { background: rgba(var(--rgb-primary-text-color, 0,0,0), .05); }
+        .row:hover { background: color-mix(in srgb, var(--primary-text-color) 5%, transparent); }
         .row.bad .state { color: var(--error-color); }
         .row.act .state { color: var(--primary-color); }
-        .icon { color: var(--state-icon-color, var(--paper-item-icon-color)); flex: none; }
-        /* placeholder for a row not yet on screen: same 24px footprint as
-           ha-state-icon so nothing shifts when the real icon arrives */
-        .icon.ph { display: inline-block; width: 24px; height: 24px; border-radius: 50%;
-                   background: var(--divider-color); opacity: .35; }
+        /* placeholder for a row not yet on screen: the icon's footprint, so nothing shifts */
+        .sbk-ico .ph { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--divider-color); opacity: .35; }
         .body { flex: 1; min-width: 0; }
         .name { color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sec, .jinja, .diag-line { color: var(--secondary-text-color); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1023,29 +1037,29 @@ class SbEntityBrowser extends HTMLElement {
         .empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0;
                  color: var(--secondary-text-color); font-style: italic; }
         .empty ha-icon { --mdc-icon-size: 32px; opacity: .5; }
-        .note { color: var(--secondary-text-color); font-style: italic; font-size: .8em; padding: 4px 0; }
+        .note { color: var(--secondary-text-color); font-style: italic; font-size: .8em; padding: 4px 16px; }
       </style>
       <ha-card class="${this._collapsed ? "collapsed" : ""}">
-        <div class="header">
-          <div class="title">${esc(cfg.title || "")}</div>
-          <div class="count">${shown === ids.length ? ids.length : shown + " / " + ids.length}</div>
-          ${this._isPopout ? "" : `<ha-icon class="hbtn collapse" icon="${this._collapsed ? "mdi:chevron-up" : "mdi:chevron-down"}" title="${this._collapsed ? "Show the entries" : "Hide the entries"}"></ha-icon>`}
-          ${this._isPopout ? `<ha-icon class="hbtn popclose" icon="mdi:close" title="Close"></ha-icon>` : cfg.popout === false ? "" : `<ha-icon class="hbtn popout" icon="mdi:arrow-expand-all" title="Open full size"></ha-icon>`}
+        <div class="header sbk-head">
+          <h2>${esc(cfg.title || "")}</h2>
+          <span class="sbk-count">${shown === ids.length ? `${ids.length} ${ids.length === 1 ? "entity" : "entities"}` : `${shown} of ${ids.length}`}</span>
           ${cfg.show_group_selector
             ? `<select class="gsel" title="Group by">${["none", "floor", "area", "state", "domain", "label"]
                 .map((g) => `<option value="${g}" ${g === (groupBy || "none") ? "selected" : ""}>${g === "none" ? "No grouping" : g[0].toUpperCase() + g.slice(1)}</option>`)
                 .join("")}</select>`
             : ""}
           ${groupBy
-            ? `<ha-icon class="fold-btn" data-fold="collapse" icon="mdi:unfold-less-horizontal" title="Collapse all"></ha-icon>
-               <ha-icon class="fold-btn" data-fold="expand" icon="mdi:unfold-more-horizontal" title="Expand all"></ha-icon>`
+            ? `<button class="sbk-kb fold-btn" data-fold="collapse" title="Collapse all groups" aria-label="Collapse all groups"><ha-icon icon="mdi:unfold-less-horizontal"></ha-icon></button>
+               <button class="sbk-kb fold-btn" data-fold="expand" title="Expand all groups" aria-label="Expand all groups"><ha-icon icon="mdi:unfold-more-horizontal"></ha-icon></button>`
             : ""}
           ${cfg.toggle_all_button
-            ? `<ha-icon class="tall-btn ${togglable.length ? "" : "dim"}" icon="mdi:toggle-switch-outline" title="Toggle all shown (${togglable.length} of ${shownIds.length})"></ha-icon>`
+            ? `<button class="sbk-kb tall-btn ${togglable.length ? "" : "dim"}" title="Toggle all shown (${togglable.length} of ${shownIds.length})" aria-label="Toggle all shown"><ha-icon icon="mdi:toggle-switch-outline"></ha-icon></button>`
             : ""}
           ${cfg.diagnostics_button
-            ? `<ha-icon class="diag-btn ${this._diag ? "on" : ""}" icon="mdi:stethoscope" title="Toggle diagnostics"></ha-icon>`
+            ? `<button class="sbk-kb diag-btn ${this._diag ? "on-state" : ""}" title="${this._diag ? "Hide" : "Show"} diagnostics" aria-label="Diagnostics" aria-pressed="${this._diag ? "true" : "false"}"><ha-icon icon="mdi:stethoscope"></ha-icon></button>`
             : ""}
+          ${this._isPopout ? `<button class="sbk-kb popclose" title="Close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button>` : cfg.popout === false ? "" : `<button class="sbk-kb popout" title="Open full size" aria-label="Open full size"><ha-icon icon="mdi:arrow-expand-all"></ha-icon></button>`}
+          ${this._isPopout ? "" : `<button class="sbk-kb collapse" title="${this._collapsed ? "Show the entries" : "Hide the entries"}" aria-label="${this._collapsed ? "Show the entries" : "Hide the entries"}"><ha-icon icon="${this._collapsed ? "mdi:chevron-down" : "mdi:chevron-up"}"></ha-icon></button>`}
         </div>
         ${cfg.show_search ? `<input type="search" class="searchbox" placeholder="Search…" value="${esc(this._search)}">` : ""}
         ${chipsHtml}
@@ -1078,7 +1092,7 @@ class SbEntityBrowser extends HTMLElement {
       el.addEventListener("click", (e) => {
         const ia = this._iconAction(id);
         // the placeholder span is swapped for an ha-state-icon later; both carry .icon
-        if (ia && e.composedPath().some((n) => n.classList && n.classList.contains("icon"))) { e.stopPropagation(); this._handleTap(id, ia); return; }
+        if (ia && e.composedPath().some((n) => n.classList && n.classList.contains("ihit"))) { e.stopPropagation(); this._handleTap(id, ia); return; }
         this._handleTap(id);
       });
       el.addEventListener("keydown", (e) => e.key === "Enter" && this._handleTap(id));
@@ -1309,7 +1323,7 @@ class SbEntityBrowser extends HTMLElement {
     const h = this._hass;
     const rootRect = rootEl ? rootEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     for (const r of this.shadowRoot.querySelectorAll(".row")) {
-      const ph = r.querySelector(".icon.ph");
+      const ph = r.querySelector(".sbk-ico .ph");
       if (!ph) continue;
       const b = r.getBoundingClientRect();
       if (!b.height || b.bottom < rootRect.top - 80 || b.top > rootRect.bottom + 80) continue;
@@ -1319,7 +1333,6 @@ class SbEntityBrowser extends HTMLElement {
       icon.className = "icon";
       icon.hass = h;
       icon.stateObj = st;
-      icon.title = ph.title;
       ph.replaceWith(icon);
     }
   }
