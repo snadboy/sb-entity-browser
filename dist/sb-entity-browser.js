@@ -4,7 +4,7 @@
  */
 
 const CARD = "sb-entity-browser";
-const VERSION = "0.34.0";
+const VERSION = "0.34.1";
 // How long typing must pause before a costly search runs — the editor's
 // config-changed emit, its per-pattern counts, the card's own search box, and
 // the card's re-render on a repeated setConfig all wait this long.
@@ -657,7 +657,11 @@ class SbEntityBrowser extends HTMLElement {
   _tipFor(id, a) {
     const act = a?.action || "more-info";
     if (act === "none") return "";
-    if (act === "toggle") return toggleCall(this._hass, id)?.label || "";
+    if (act === "toggle") {
+      const t = toggleCall(this._hass, id);
+      if (!t) return "";
+      return t.domain === "lock" && this._hass.states[id]?.attributes?.code_format ? `${t.label} (asks for the code)` : t.label;
+    }
     if (act === "navigate") return `Open ${a.navigation_path || "/"}`;
     if (act === "url") return `Open ${a.url_path || "link"}`;
     if (act === "perform-action" || act === "call-service") return `Run ${a.perform_action || a.service || "action"}`;
@@ -672,7 +676,12 @@ class SbEntityBrowser extends HTMLElement {
     if (act === "more-info") fire(this, "hass-more-info", { entityId: id });
     else if (act === "toggle") {
       const t = toggleCall(this._hass, id);
-      if (t) this._hass.callService(t.domain, t.service, {}, { entity_id: id });
+      if (!t) return;
+      // A lock with a code_format (e.g. ^\d{4,8}$) refuses lock/unlock without a code —
+      // ask for it the way HA's own lock controls do (0.34.0 sent none: "The code for … doesn't
+      // match pattern").
+      if (t.domain === "lock" && this._hass.states[id]?.attributes?.code_format) this._askCode(id, t);
+      else this._hass.callService(t.domain, t.service, {}, { entity_id: id });
     }
     else if (act === "assist") fire(this, "show-dialog", { dialogTag: "ha-voice-command-dialog", dialogImport: () => import("/frontend_latest/ha-voice-command-dialog.js").catch(() => {}), dialogParams: {} });
     else if (act === "history") {
@@ -711,7 +720,7 @@ class SbEntityBrowser extends HTMLElement {
   }
 
   _render() {
-    if (this._popDlg) { this._dirty = true; return; }      // never rebuild under the pop-out (it lives in this shadow root)
+    if (this._popDlg || this._codeDlg) { this._dirty = true; return; }      // never rebuild under the pop-out / code prompt (they live in this shadow root)
     if (!this._kitReady()) return;
     this._dirty = false;
     this._lastRender = Date.now();
@@ -976,6 +985,16 @@ class SbEntityBrowser extends HTMLElement {
         ha-card.collapsed > :not(.header):not(.chips) { display: none !important; }
         dialog.sebpop { border: none; border-radius: 12px; padding: 0; width: min(960px, 94vw); height: min(90vh, 1400px); background: transparent; box-shadow: 0 8px 32px rgba(0,0,0,.4); overflow: hidden; }
         dialog.sebpop::backdrop { background: rgba(0,0,0,.5); }
+        dialog.sebcode { border: none; border-radius: 12px; padding: 0; width: min(340px, 90vw); background: var(--card-background-color, #fff);
+                         color: var(--primary-text-color); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+        dialog.sebcode::backdrop { background: rgba(0,0,0,.5); }
+        .cbody { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; margin: 0; }
+        .cbody h3 { margin: 0; font-size: 17px; font-weight: 500; }
+        .clbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--secondary-text-color); }
+        .clbl input { font: inherit; font-size: 20px; letter-spacing: .3em; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--divider-color);
+                      background: var(--secondary-background-color, transparent); color: var(--primary-text-color); outline-color: var(--primary-color); }
+        .cerr { color: var(--error-color); font-size: 13px; min-height: 1em; }
+        .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
         dialog.sebpop sb-entity-browser { display: block; height: 100%; }
         .header { flex-wrap: wrap; }
         /* an armed icon is its own control: pointer + a ring on hover */
@@ -1301,6 +1320,40 @@ class SbEntityBrowser extends HTMLElement {
   // chips/search/grouping), sized to the viewport, its own subscription while
   // open. Inside this shadow root (HA's pickers need the app's contexts) —
   // hence the _render() guard above while it is open.
+  /** Ask for a lock's code, then send lock / unlock with it. The code is checked against the
+   *  lock's code_format, sent once and never kept; HA's refusal (a wrong code) shows here. */
+  _askCode(id, t) {
+    const h = this._hass, st = h.states[id];
+    const name = st?.attributes?.friendly_name || id;
+    let rx = null;
+    try { rx = new RegExp(st.attributes.code_format); } catch (e) { rx = null; }
+    this.shadowRoot.querySelectorAll("dialog.sebcode").forEach((x) => x.remove());
+    const d = document.createElement("dialog");
+    d.className = "sebcode";
+    d.innerHTML = `<form method="dialog" class="cbody">
+        <h3>${esc(t.label)} ${esc(name)}</h3>
+        <label class="clbl">Code<input class="code" type="password" inputmode="numeric" autocomplete="off" required></label>
+        <div class="cerr" role="alert"></div>
+        <div class="cbtns"><button type="button" class="sbk-btn ccancel">Cancel</button><button type="submit" class="sbk-btn danger cok">${esc(t.label)}</button></div>
+      </form>`;
+    this.shadowRoot.appendChild(d);
+    this._codeDlg = d;
+    const inp = d.querySelector(".code"), err = d.querySelector(".cerr"), ok = d.querySelector(".cok");
+    const close = () => { try { d.close(); } catch (e) { /* closed */ } d.remove(); this._codeDlg = null; if (this._dirty) this._render(); };
+    d.querySelector(".ccancel").addEventListener("click", close);
+    d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+    d.querySelector("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = inp.value.trim();
+      if (rx && !rx.test(code)) { err.textContent = "That code is not in the lock's format."; inp.focus(); return; }
+      ok.disabled = true; err.textContent = "";
+      try { await h.callService(t.domain, t.service, { code }, { entity_id: id }); close(); }
+      catch (ex) { err.textContent = String(ex?.message || ex); ok.disabled = false; inp.select(); }
+    });
+    d.showModal();
+    inp.focus();
+  }
+
   _openPopout() {
     if (this._popDlg) return;
     const d = document.createElement("dialog"); d.className = "sebpop";
