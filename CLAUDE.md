@@ -612,3 +612,6 @@ User: "Should SB Entity Browser be using the kit also?" → yes, partly. Header 
 ## v0.34.1 (2026-10-15) — locks that need a code
 
 User clicked the Front Door lock icon: "The code for lock.… doesn't match pattern ^\d{4,8}$" — all three Yale locks have `code_format` and 0.34.0 sent lock/unlock with no code. Now a lock with `code_format` gets a code prompt (`_askCode`, a <dialog> in the shadow root; render defers while it is open, like the pop-out): masked numeric input checked against code_format, sent once as `code`, never kept; HA's refusal shown in the prompt. Tooltip "Lock (asks for the code)". The garage-remote lock (no code_format) still acts directly. Tested with a recording callService (incl. a simulated wrong-code rejection) — no lock moved, no code sent.
+
+## v0.34.2 (2026-10-15)
+Kit loader: if a page missed the SB UI Kit (opened while HA was restarting, or a slow device) the card fetches it itself after 3 s, and redraws if it arrives after the 15 s "not loaded" message.
